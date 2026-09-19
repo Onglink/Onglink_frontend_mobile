@@ -1,0 +1,115 @@
+# GitHub Actions CI Workflow
+name: CI/CD Pipeline Básico
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-version:
+    name: Build, Test & Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    env:
+      new_version: ''
+
+    steps:
+      - name: Checkout do código
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0 # Necessário para ler o histórico e calcular tags
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Instalar dependências e validar build
+        run: |
+          npm install
+          npm run build --if-present
+          npm test --if-present
+
+      # ==========================================
+      # Automação de Versão (Semver) e Tags
+      # ==========================================
+      - name: Instalar semver
+        if: github.event_name == 'push'
+        run: npm install -g semver
+
+      - name: Criar tag inicial caso não exista
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          git fetch --tags || true
+          if [ -z "$(git tag)" ]; then
+            git config --global user.name 'github-actions[bot]'
+            git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+            git tag -a v0.0.0 -m "Initial release"
+            git push origin v0.0.0 || echo "Tag já existe"
+          fi
+
+      - name: Calcular nova versão
+        if: github.event_name == 'push'
+        id: version
+        run: |
+          git fetch --tags || true
+          LAST_TAG=$(git describe --tags $(git rev-list --tags --max-count=1 2>/dev/null) 2>/dev/null || echo "v0.0.0")
+          
+          if [ "$LAST_TAG" = "v0.0.0" ]; then
+            COMMITS=$(git log --pretty=format:"%s")
+          else
+            COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=format:"%s")
+          fi
+
+          MAJOR=0
+          MINOR=0
+          PATCH=0
+
+          while IFS= read -r COMMIT; do
+            if [[ "$COMMIT" == *"BREAKING CHANGE"* ]]; then
+              MAJOR=1
+            elif [[ "$COMMIT" == *"feat"* ]]; then
+              MINOR=1
+            elif [[ "$COMMIT" == *"fix"* ]]; then
+              PATCH=1
+            fi
+          done <<< "$COMMITS"
+
+          CURRENT_VERSION=${LAST_TAG#v}
+          CURRENT_VERSION=${CURRENT_VERSION:-0.0.0}
+
+          if [[ $MAJOR -eq 1 ]]; then
+            NEW_VERSION=$(semver -i major "$CURRENT_VERSION")
+          elif [[ $MINOR -eq 1 ]]; then
+            NEW_VERSION=$(semver -i minor "$CURRENT_VERSION")
+          else 
+            NEW_VERSION=$(semver -i patch "$CURRENT_VERSION")
+          fi
+
+          echo "Nova versão calculada: $NEW_VERSION"
+          echo "new_version=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: Atualizar versão no package.json
+        if: github.event_name == 'push'
+        run: npm version ${{ env.new_version }} --no-git-tag-version
+
+      - name: Commit e push da Tag
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add package.json
+          git commit -m "chore(release): version ${{ env.new_version }} [skip ci]" || echo "Sem mudanças para commit"
+          git tag v${{ env.new_version }}
+          git push origin main --tags
