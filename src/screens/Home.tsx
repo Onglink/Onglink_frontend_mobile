@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, Text, View, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { StyleSheet, Text, TextInput, View, TouchableOpacity, useWindowDimensions } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
@@ -13,19 +13,40 @@ export default function Home({ navigation }: Props) {
   return (
     <View style={styles.container}>
       <View style={[styles.card, isTablet && { maxWidth: 600, width: '100%' }]}>
-        <Text style={styles.title}>Bem-vindo ao ONGLink</Text>
-        <Text style={styles.subtitle}>
-          
-        </Text>
+        <Text style={styles.title}>Bem-vindo ao ONGLink!</Text>
+        
+        <Text style={styles.label}> Email </Text>
+        <TextInput
+          style={[styles.input]}
+        />
+
+        <Text style={styles.label}> Senha </Text>
+        <TextInput
+          style={[styles.input]}
+        />
 
         <TouchableOpacity 
-          style={styles.button} 
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('Cadastro')}
-        >
+            style={styles.button} 
+            activeOpacity={0.85}
+            // onPress={() => navigation.navigate('Feed')}
+          >
+          <Text style={styles.buttonText}>Acessar</Text>
+        </TouchableOpacity>
+
+      </View>
+
+      <View style={[styles.card, isTablet && { maxWidth: 600, width: '100%', marginTop: 30 }]}>
+          
+        <Text style={styles.title}>Não tem uma conta?</Text>
+        <TouchableOpacity 
+            style={styles.button} 
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('Cadastro')}
+          >
           <Text style={styles.buttonText}>Criar Conta</Text>
         </TouchableOpacity>
       </View>
+
     </View>
   );
 }
@@ -58,11 +79,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   subtitle: {
-    fontSize: 15,
-    color: colors.textSecondary,
+    fontSize: 22,
+    color: colors.primaryDark,
+    fontWeight: 'bold',
     textAlign: 'center',
     lineHeight: 22,
-    marginBottom: 30,
+    marginTop: 20,
+    marginBottom: 20,
   },
   button: {
     backgroundColor: colors.primary,
@@ -77,6 +100,24 @@ const styles = StyleSheet.create({
     color: colors.textLight,
     fontSize: 17,
     fontWeight: 'bold',
+  },
+  input :{
+    borderWidth: 1,
+    borderColor: colors.inputBorder,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.textPrimary,
+    backgroundColor: colors.inputBackground,
+    width: '100%',
+    marginBottom: 30,
+    },
+  label: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    marginBottom: 5,
   },
 });
 
