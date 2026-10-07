@@ -1,39 +1,132 @@
 import React from 'react';
-import { StyleSheet, Text, TextInput, View, TouchableOpacity, useWindowDimensions } from 'react-native';
+import { useState } from 'react';
+import {
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+  TouchableOpacity,
+  useWindowDimensions,
+  ActivityIndicator
+ } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { colors } from '../utils/theme';
+import { Field, Form, Formik, ErrorMessage, FormikHelpers } from "formik";
+import * as Yup from 'yup';
+import usuarioService from '../services/usuarioService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Home'>;
+
+const validationSchema = Yup.object().shape({
+    email: Yup.string().email('Email inválido').required('Campo obrigatório'),
+    senha: Yup.string().required('Campo obrigatório')
+});
+type LoginFormValues = Yup.InferType<typeof validationSchema>;
+
+const initialValues: LoginFormValues = {
+  email: '',
+  senha: ''
+};
+
 
 export default function Home({ navigation }: Props) {
   const { width } = useWindowDimensions();
   const isTablet = width > 600;
 
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  const handleLogin = async (
+    values: LoginFormValues, 
+    { setSubmitting }: { setSubmitting: (isSubmitting: boolean) => void }
+  ) => {
+  setLoginError(null);
+  try {
+    const response = await usuarioService.loginUsuario(values);  
+    console.log("Login bem-sucedido:", response);
+
+          // Salva os dados do usuário no localStorage
+          await AsyncStorage.setItem('authToken', response.token); // O token      
+          await AsyncStorage.setItem('usuarioLogado', JSON.stringify(response.usuario));
+          await AsyncStorage.setItem('user_status', response.usuario.status);
+          await AsyncStorage.setItem('userId', response.usuario._id);
+          
+          // Redireciona para o Feed
+          //navigation.navigate('Feed');
+
+      } catch (error:any) {
+          console.error("Erro no login:", error);
+          const mensagem = error.response?.data?.error ||
+          error.response?.data?.message ||
+          "Falha ao realizar login.";
+
+          setLoginError(mensagem);
+      } finally {
+          setSubmitting(false);
+      }
+  };
+
   return (
     <View style={styles.container}>
-      <View style={[styles.card, isTablet && { maxWidth: 600, width: '100%' }]}>
-        <Text style={styles.title}>Bem-vindo ao ONGLink!</Text>
+
+
+    <Formik
+        initialValues={initialValues}
+        validationSchema={validationSchema}
+        onSubmit={handleLogin}
+      >
+        {({
+          handleChange,
+          handleBlur,
+          handleSubmit,
+          values,
+          errors,
+          touched,
+          isSubmitting,
+        }) => (
+        <View style={[styles.card, isTablet && { maxWidth: 600, width: '100%' }]}>
+          <Text style={styles.title}>Bem-vindo ao ONGLink!</Text>
+          
+          <Text style={styles.label}> Email </Text>
+          {errors.email && touched.email && (<Text style={styles.errorText}>{errors.email}</Text>)}
+          <TextInput
+            style={[styles.input]}
+            placeholder="exemplo@email.com"
+            placeholderTextColor={colors.textMuted}
+            value={values.email}
+            onChangeText={handleChange('email')}
+            onBlur={handleBlur('email')}
+          />
+
+          <Text style={styles.label}> Senha </Text>
+          {errors.senha && touched.senha && (<Text style={styles.errorText}>{errors.senha}</Text>)}
+          <TextInput
+            style={[styles.input]}
+            placeholder="••••••"
+            placeholderTextColor={colors.textMuted}
+            value={values.senha}
+            onChangeText={handleChange('senha')}
+            onBlur={handleBlur('senha')}
+            secureTextEntry
+          />
         
-        <Text style={styles.label}> Email </Text>
-        <TextInput
-          style={[styles.input]}
-        />
+          <TouchableOpacity
+              style={[styles.button, isSubmitting && styles.buttonDisabled]}
+              onPress={() => handleSubmit()}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color="#FFF" />
+              ) : (
+                <Text style={styles.buttonText}>Entrar</Text>
+              )}
+          </TouchableOpacity>
 
-        <Text style={styles.label}> Senha </Text>
-        <TextInput
-          style={[styles.input]}
-        />
+        </View>
+        )}
+      </Formik>
 
-        <TouchableOpacity 
-            style={styles.button} 
-            activeOpacity={0.85}
-            // onPress={() => navigation.navigate('Feed')}
-          >
-          <Text style={styles.buttonText}>Acessar</Text>
-        </TouchableOpacity>
-
-      </View>
 
       <View style={[styles.card, isTablet && { maxWidth: 600, width: '100%', marginTop: 30 }]}>
           
@@ -96,10 +189,19 @@ const styles = StyleSheet.create({
     borderBottomWidth: 3,
     borderBottomColor: colors.primaryDark,
   },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
   buttonText: {
     color: colors.textLight,
     fontSize: 17,
     fontWeight: 'bold',
+  },
+  errorText: {
+    color: colors.error,
+    fontSize: 16,
+    marginTop: 5,
+    marginBottom: 10
   },
   input :{
     borderWidth: 1,
