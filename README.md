@@ -4,7 +4,7 @@
 
 # SPRINT 1 - 15/09/2026 - 28/09/2026. :heavy_check_mark:
 # SPRINT 2 - 29/09/2026 - 06/10/2026. :heavy_check_mark:
-# SPRINT 2 - 07/10/2026 - 13/10/2026.
+# SPRINT 3 - 07/10/2026 - 13/10/2026.
 
 
 :trollface:
