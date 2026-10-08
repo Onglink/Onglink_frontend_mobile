@@ -25,6 +25,14 @@ export default function Home({ navigation }: Props) {
         >
           <Text style={styles.buttonText}>Criar Conta</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.secondaryButton}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Feed')}
+        >
+          <Text style={styles.secondaryButtonText}>Ver Feed</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -76,6 +84,21 @@ const styles = StyleSheet.create({
   buttonText: {
     color: colors.textLight,
     fontSize: 17,
+    fontWeight: 'bold',
+  },
+  secondaryButton: {
+    backgroundColor: colors.cardBackground,
+    borderColor: colors.brandGreen,
+    borderRadius: 8,
+    borderWidth: 1,
+    alignItems: 'center',
+    marginTop: 12,
+    paddingVertical: 14,
+    width: '100%',
+  },
+  secondaryButtonText: {
+    color: colors.brandGreenDark,
+    fontSize: 16,
     fontWeight: 'bold',
   },
 });

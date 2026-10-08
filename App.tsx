@@ -5,11 +5,13 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import Home from './src/screens/Home';
 import CadastroSimples from './src/screens/CadastroSimples';
+import Feed from './src/screens/Feed';
 import { colors } from './src/utils/theme';
 
 export type RootStackParamList = {
   Home: undefined;
   Cadastro: undefined;
+  Feed: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList, 'root'>();
@@ -40,6 +42,11 @@ export default function App() {
           name="Cadastro"
           component={CadastroSimples}
           options={{ title: 'Criar Conta' }}
+        />
+        <Stack.Screen
+          name="Feed"
+          component={Feed}
+          options={{ title: 'Feed da comunidade' }}
         />
       </Stack.Navigator>
     </NavigationContainer>
