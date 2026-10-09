@@ -1,5 +1,5 @@
 import React from 'react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -30,12 +30,29 @@ const initialValues: LoginFormValues = {
   senha: ''
 };
 
+// Tempos de bloqueio em segundos: 1ª penalidade = 5s, 2ª = 15s, 3ª = 30s, 4ª em diante = 60s
+const LOCKOUT_DELAYS = [5, 15, 30, 60];
+const MAX_FAILED_ATTEMPTS = 5;
 
 export default function Home({ navigation }: Props) {
   const { width } = useWindowDimensions();
   const isTablet = width > 600;
 
   const [loginError, setLoginError] = useState<string | null>(null);
+  const [failedAttempts, setFailedAttempts] = useState<number>(0);
+  const [lockoutTime, setLockoutTime] = useState<number>(0);
+
+  // Timer para o lockout progressivo
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (lockoutTime > 0) {
+      timer = setInterval(() => {
+        setLockoutTime((prev) => prev - 1);
+      }, 1000);
+    }
+    return () => clearInterval(timer);
+  }, [lockoutTime]);
+
 
   const handleLogin = async (
     values: LoginFormValues, 
@@ -45,6 +62,9 @@ export default function Home({ navigation }: Props) {
   try {
     const response = await usuarioService.loginUsuario(values);  
     console.log("Login bem-sucedido:", response);
+
+          // Zera o contador de falhas após um login bem-sucedido
+          setFailedAttempts(0);
 
           // Salva os dados do usuário no localStorage
           await AsyncStorage.setItem('authToken', response.token); // O token      
@@ -56,16 +76,32 @@ export default function Home({ navigation }: Props) {
           //navigation.navigate('Feed');
 
       } catch (error:any) {
-          console.error("Erro no login:", error);
-          const mensagem = error.response?.data?.error ||
-          error.response?.data?.message ||
-          "Falha ao realizar login.";
+     console.error('Erro no login:', error);
 
-          setLoginError(mensagem);
-      } finally {
-          setSubmitting(false);
+      const newFailedAttempts = failedAttempts + 1;
+      setFailedAttempts(newFailedAttempts);
+
+      // Aplica o lockout se atingiu o limite de 5 tentativas falhas
+      if (newFailedAttempts >= MAX_FAILED_ATTEMPTS) {
+        const penaltyIndex = newFailedAttempts - MAX_FAILED_ATTEMPTS;
+        // Pega o tempo da lista ou mantém o último valor (60s) para penalidades adicionais
+        const delay = LOCKOUT_DELAYS[penaltyIndex] || LOCKOUT_DELAYS[LOCKOUT_DELAYS.length - 1];
+
+        setLockoutTime(delay);
+        setLoginError(`Muitas tentativas incorretas. Aguarde ${delay} segundos.`);
+      } else {
+        const mensagem =
+          error.response?.data?.error ||
+          error.response?.data?.message ||
+          'Falha ao realizar login.';
+        setLoginError(`${mensagem} (Tentativa ${newFailedAttempts}/${MAX_FAILED_ATTEMPTS})`);
       }
+    } finally {
+      setSubmitting(false);
+    }
   };
+
+  const isFormDisabled = lockoutTime > 0;
 
   return (
     <View style={styles.container}>
@@ -87,6 +123,20 @@ export default function Home({ navigation }: Props) {
         }) => (
         <View style={[styles.card, isTablet && { maxWidth: 600, width: '100%' }]}>
           <Text style={styles.title}>Bem-vindo ao ONGLink!</Text>
+
+          {/* Alerta de erro e contador de bloqueio */}
+            {isFormDisabled ? (
+              <View style={styles.lockoutBox}>
+                <Text style={styles.lockoutText}>
+                  Acesso bloqueado por segurança.
+                </Text>
+                <Text style={styles.timerText}>
+                  Tente novamente em {lockoutTime}s
+                </Text>
+              </View>
+            ) : (
+              loginError && <Text style={styles.errorText}>{loginError}</Text>
+            )}
           
           <Text style={styles.label}> Email </Text>
           {errors.email && touched.email && (<Text style={styles.errorText}>{errors.email}</Text>)}
@@ -97,6 +147,9 @@ export default function Home({ navigation }: Props) {
             value={values.email}
             onChangeText={handleChange('email')}
             onBlur={handleBlur('email')}
+            editable={!isFormDisabled}
+            keyboardType="email-address"
+            autoCapitalize="none"
           />
 
           <Text style={styles.label}> Senha </Text>
@@ -109,18 +162,32 @@ export default function Home({ navigation }: Props) {
             onChangeText={handleChange('senha')}
             onBlur={handleBlur('senha')}
             secureTextEntry
+            editable={!isFormDisabled}
           />
         
           <TouchableOpacity
-              style={[styles.button, isSubmitting && styles.buttonDisabled]}
-              onPress={() => handleSubmit()}
-              disabled={isSubmitting}
-            >
-              {isSubmitting ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <Text style={styles.buttonText}>Entrar</Text>
-              )}
+                  onPress={() => navigation.navigate('RecuperarSenha')}
+                >
+                  <Text style={styles.forgotPassword}>Esqueci minha senha</Text>
+          </TouchableOpacity>
+
+          {/* Botão Entrar */}
+          
+          <TouchableOpacity
+            style={[
+              styles.button,
+              (isSubmitting || isFormDisabled) && styles.buttonDisabled,
+            ]}
+            onPress={() => handleSubmit()}
+            disabled={isSubmitting || isFormDisabled}
+          >
+            {isSubmitting ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={styles.buttonText}>
+                {isFormDisabled ? `Aguarde (${lockoutTime}s)` : 'Entrar'}
+              </Text>
+            )}
           </TouchableOpacity>
 
         </View>
@@ -145,6 +212,27 @@ export default function Home({ navigation }: Props) {
 }
 
 const styles = StyleSheet.create({
+  lockoutBox: {
+    backgroundColor: '#ffebe9',
+    borderColor: colors.error,
+    borderWidth: 1,
+    padding: 12,
+    borderRadius: 8,
+    width: '100%',
+    marginBottom: 15,
+    alignItems: 'center',
+  },
+  lockoutText: {
+    color: colors.error,
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  timerText: {
+    color: colors.error,
+    fontSize: 16,
+    fontWeight: 'bold',
+    marginTop: 4,
+  },
   container: {
     flex: 1,
     backgroundColor: colors.background,
@@ -221,6 +309,12 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     marginBottom: 5,
   },
+  forgotPassword: {
+    color: colors.brandGreen,
+    fontWeight: '700',
+    fontSize: 14,
+    marginBottom: 20,
+  }
 });
 
 
