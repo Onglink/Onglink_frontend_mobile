@@ -15,28 +15,12 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../../App';
+import { ProfilePost, RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Feed'>;
 
-type PostCategory = 'Ação' | 'Pedido';
-
-type FeedPost = {
-	id: string;
-	author: string;
-	description: string;
-	initials: string;
-	category: PostCategory;
-	location: string;
-	time: string;
-	title: string;
-	body: string;
-	imageUri: string | null;
-	likes: number;
-	comments: number;
-	isLiked: boolean;
-};
+type FeedPost = ProfilePost;
 
 const DEMO_POSTS: FeedPost[] = [
 	{
@@ -235,7 +219,9 @@ export default function Feed({ navigation }: Props) {
 				<Pressable
 					accessibilityRole="button"
 					accessibilityLabel="Perfil"
-					onPress={() => Alert.alert('Perfil indisponível', 'A tela de perfil ainda não está disponível.')}
+					onPress={() => navigation.navigate('Perfil', {
+						posts: posts.filter((post) => post.author === 'Mariana Costa' || post.author === 'Você'),
+					})}
 					style={styles.navigationButton}
 				>
 					<NavigationIcon name="profile" color={colors.brandGreenDark} />
