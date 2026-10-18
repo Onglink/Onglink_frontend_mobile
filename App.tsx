@@ -112,7 +112,7 @@ export default function App() {
                           fontWeight: 'bold',
                         }}
                       >
-                        ← Início
+                        
                       </Text>
                     </TouchableOpacity>
                   )
@@ -143,7 +143,7 @@ export default function App() {
                       fontSize: 13,
                     }}
                   >
-                    {usuario ? `👤 ${usuario.nome.split(' ')[0]}` : '🔑 Entrar'}
+                    {usuario ? `👤 ${usuario.nome.split(' ')[0]}` : ''}
                   </Text>
                 </TouchableOpacity>
               ),
