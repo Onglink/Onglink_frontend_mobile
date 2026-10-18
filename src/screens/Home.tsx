@@ -15,7 +15,7 @@ export default function Home({ navigation }: Props) {
       <View style={[styles.card, isTablet && { maxWidth: 600, width: '100%' }]}>
         <Text style={styles.title}>Bem-vindo ao ONGLink</Text>
         <Text style={styles.subtitle}>
-          
+          Conectando pessoas a causas sociais e fortalecendo o impacto das ONGs.
         </Text>
 
         <TouchableOpacity 
@@ -23,7 +23,15 @@ export default function Home({ navigation }: Props) {
           activeOpacity={0.85}
           onPress={() => navigation.navigate('Cadastro')}
         >
-          <Text style={styles.buttonText}>Criar Conta</Text>
+          <Text style={styles.buttonText}>Criar Conta de Usuário</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.ongButton}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('CadastroCompleto')}
+        >
+          <Text style={styles.ongButtonText}>🏢 Cadastrar Minha ONG (Completo)</Text>
         </TouchableOpacity>
 
         <TouchableOpacity
@@ -31,7 +39,7 @@ export default function Home({ navigation }: Props) {
           activeOpacity={0.85}
           onPress={() => navigation.navigate('Feed')}
         >
-          <Text style={styles.secondaryButtonText}>Ver Feed</Text>
+          <Text style={styles.secondaryButtonText}>Ver Feed da Comunidade</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -98,6 +106,21 @@ const styles = StyleSheet.create({
   },
   secondaryButtonText: {
     color: colors.brandGreenDark,
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  ongButton: {
+    backgroundColor: colors.brandGreen,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 12,
+    paddingVertical: 15,
+    width: '100%',
+    borderBottomWidth: 3,
+    borderBottomColor: colors.brandGreenDark,
+  },
+  ongButtonText: {
+    color: colors.textLight,
     fontSize: 16,
     fontWeight: 'bold',
   },

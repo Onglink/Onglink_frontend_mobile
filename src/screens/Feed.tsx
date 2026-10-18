@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
 	Alert,
 	Image,
@@ -12,11 +12,13 @@ import {
 	TextInput,
 	View,
 	useWindowDimensions,
+	RefreshControl,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ProfilePost, RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
+import publicacaoService from '../services/publicacaoService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Feed'>;
 
@@ -77,7 +79,48 @@ export default function Feed({ navigation }: Props) {
 	const [draft, setDraft] = useState('');
 	const [selectedImage, setSelectedImage] = useState<string | null>(null);
 	const [isComposerVisible, setIsComposerVisible] = useState(false);
+	const [refreshing, setRefreshing] = useState(false);
 	const canPublish = draft.trim().length > 0 || selectedImage !== null;
+
+	// Carrega as publicações reais do backend
+	const loadPosts = useCallback(async () => {
+		try {
+			const data = await publicacaoService.listarPublicacoes();
+			if (Array.isArray(data) && data.length > 0) {
+				const mapped: FeedPost[] = data.map((item) => ({
+					id: item._id,
+					author: item.criadoPor?.assignedTo?.nomeFantasia || item.criadoPor?.nome || 'ONG Parceira',
+					description: item.criadoPor?.assignedTo ? 'ONG Verificada' : 'Membro Onglink',
+					initials: (item.criadoPor?.assignedTo?.nomeFantasia || item.criadoPor?.nome || 'ON')
+						.substring(0, 2)
+						.toUpperCase(),
+					category: 'Ação',
+					location: 'Comunidade Onglink',
+					time: item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-BR') : 'Recente',
+					title: item.titulo || 'Publicação',
+					body: item.descricao || '',
+					imageUri: item.imagem && item.imagem.length > 0 ? item.imagem[0] : null,
+					likes: 12,
+					comments: 3,
+					isLiked: false,
+				}));
+				setPosts(mapped);
+			}
+		} catch {
+			// Se o backend estiver vazio ou inacessível no momento, mantém os posts de demonstração
+			console.log('Backend offline ou sem dados, exibindo dados de exemplo.');
+		}
+	}, []);
+
+	useEffect(() => {
+		loadPosts();
+	}, [loadPosts]);
+
+	const onRefresh = useCallback(async () => {
+		setRefreshing(true);
+		await loadPosts();
+		setRefreshing(false);
+	}, [loadPosts]);
 
 	const chooseImage = async () => {
 		try {
@@ -151,6 +194,14 @@ export default function Feed({ navigation }: Props) {
 				style={styles.container}
 				contentContainerStyle={styles.scrollContent}
 				keyboardShouldPersistTaps="handled"
+				refreshControl={
+					<RefreshControl
+						refreshing={refreshing}
+						onRefresh={onRefresh}
+						colors={[colors.primary]}
+						tintColor={colors.primary}
+					/>
+				}
 			>
 				<View style={[styles.content, isTablet && styles.tabletContent]}>
 					<View style={styles.postList}>

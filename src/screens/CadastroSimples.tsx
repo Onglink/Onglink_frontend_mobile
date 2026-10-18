@@ -9,11 +9,13 @@ import {
   Platform,
   ScrollView,
   useWindowDimensions,
-  Alert
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
+import usuarioService from '../services/usuarioService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Cadastro'>;
 
@@ -23,6 +25,7 @@ export default function Cadastro({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [confirmaSenha, setConfirmaSenha] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const { width } = useWindowDimensions();
   const isTablet = width > 600;
@@ -38,9 +41,9 @@ export default function Cadastro({ navigation }: Props) {
     setCpf(valorFormatado);
   };
 
-  // Validação dos dados
-  const handleEnviar = () => {
-    if (!nome || !cpf || !email || !senha || !confirmaSenha) {
+  // Validação e Envio para o Backend
+  const handleEnviar = async () => {
+    if (!nome.trim() || !cpf.trim() || !email.trim() || !senha || !confirmaSenha) {
       Alert.alert('Atenção', 'Por favor, preencha todos os campos obrigatórios.');
       return;
     }
@@ -51,7 +54,7 @@ export default function Cadastro({ navigation }: Props) {
     }
 
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!emailRegex.test(email.trim())) {
       Alert.alert('Erro', 'Por favor, digite um e-mail válido.');
       return;
     }
@@ -66,18 +69,40 @@ export default function Cadastro({ navigation }: Props) {
       return;
     }
 
-    console.log('Dados validados para a API:', { nome, cpf, email, senha });
+    setLoading(true);
 
-    Alert.alert(
-      'Sucesso', 
-      'Cadastro realizado com sucesso!',
-      [
-        {
-          text: 'OK',
-          onPress: () => navigation.navigate('Home'),
-        },
-      ]
-    );
+    try {
+      const response = await usuarioService.cadastrarUsuario({
+        nome: nome.trim(),
+        cpf: cpf.trim(),
+        email: email.trim().toLowerCase(),
+        senha,
+        status: 'user',
+      });
+
+      Alert.alert(
+        'Sucesso!',
+        response.message || 'Cadastro realizado com sucesso!',
+        [
+          {
+            text: 'Ir para o Feed',
+            onPress: () => navigation.navigate('Feed'),
+          },
+          {
+            text: 'OK',
+            onPress: () => navigation.navigate('Home'),
+          },
+        ]
+      );
+    } catch (error: any) {
+      console.error('Erro no cadastro:', error);
+      Alert.alert(
+        'Erro ao cadastrar',
+        error.message || 'Não foi possível conectar com o servidor.'
+      );
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -155,11 +180,26 @@ export default function Cadastro({ navigation }: Props) {
           </View>
 
           <TouchableOpacity
-            style={styles.button}
+            style={[styles.button, loading && { opacity: 0.7 }]}
             activeOpacity={0.85}
             onPress={handleEnviar}
+            disabled={loading}
           >
-            <Text style={styles.buttonText}>Enviar</Text>
+            {loading ? (
+              <ActivityIndicator color={colors.textLight} />
+            ) : (
+              <Text style={styles.buttonText}>Enviar</Text>
+            )}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.linkOng}
+            activeOpacity={0.7}
+            onPress={() => navigation.navigate('CadastroCompleto')}
+          >
+            <Text style={styles.linkOngText}>
+              Representa uma instituição? <Text style={styles.linkOngTextBold}>Cadastre sua ONG aqui</Text>
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -239,7 +279,22 @@ const styles = StyleSheet.create({
     color: colors.textLight,
     fontSize: 18,
     fontWeight: 'bold',
-  }
+  },
+  linkOng: {
+    marginTop: 18,
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  linkOngText: {
+    fontSize: 14,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  linkOngTextBold: {
+    color: colors.brandGreenDark,
+    fontWeight: 'bold',
+    textDecorationLine: 'underline',
+  },
 });
 
 //
