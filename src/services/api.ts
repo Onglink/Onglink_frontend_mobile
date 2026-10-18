@@ -1,30 +1,40 @@
 import { Platform } from 'react-native';
 
 /**
- * CONFIGURAÇÃO DA API ONGLINK
+ * CONFIGURAÇÃO DA API ONGLINK (LOCAL OU NUVEM)
  * 
- * Dica para testes locais:
- * - No Celular Físico via Expo Go: use o IP local da sua máquina na rede Wi-Fi (ex: 192.168.0.14).
- * - No Emulador Android: use 'http://10.0.2.2:4000/api'.
- * - No Navegador Web (expo start --web) ou iOS Simulator: use 'http://localhost:4000/api'.
+ * Para conectar ao backend na nuvem (ex: Render, Railway, AWS):
+ * 1. Cole o endereço do backend na constante REMOTE_API_URL abaixo (ou defina EXPO_PUBLIC_API_URL no .env).
+ * 2. Mude USE_REMOTE para true.
  */
 
-// IP da máquina detectado na rede local:
-export const LOCAL_IP = '192.168.0.14';
+// Cole aqui a URL do backend na nuvem (ex: 'https://onglink-backend.onrender.com'):
+export const REMOTE_API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://163.176.72.142:4000/';
 
-// Determina a baseURL ideal conforme a plataforma
+// Mude para true quando quiser usar o backend na nuvem, ou false para testar localmente:
+export const USE_REMOTE = Boolean(REMOTE_API_URL);
+
+// IP local da sua máquina na rede Wi-Fi para testes locais:
+export const LOCAL_IP = '192.168.0.10';
+
+// Determina a baseURL ideal conforme a plataforma e o modo (Local vs Nuvem)
 export const getBaseUrl = (): string => {
+  if (USE_REMOTE && REMOTE_API_URL) {
+    const urlLimpa = REMOTE_API_URL.replace(/\/+$/, '');
+    return urlLimpa.endsWith('/api') ? urlLimpa : `${urlLimpa}/api`;
+  }
+
   if (Platform.OS === 'web') {
     return 'http://localhost:4000/api';
   }
-  // Para celular físico ou emulador na mesma rede
+  // Para celular físico ou emulador na mesma rede local
   return `http://${LOCAL_IP}:4000/api`;
 };
 
 export const API_URL = getBaseUrl();
 
 // Chave da API configurada no .env do backend (cabeçalho x-api-key)
-export let API_KEY = 'sua_chave_api_secreta_aqui';
+export let API_KEY = 'fcf87fe4-7793-477d-b765-620c5cdbcf4f';
 
 // Armazenamento em memória do token JWT de autenticação
 let authToken: string | null = null;

@@ -19,6 +19,14 @@ export default function Home({ navigation }: Props) {
         </Text>
 
         <TouchableOpacity 
+          style={styles.loginButton} 
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Login')}
+        >
+          <Text style={styles.loginButtonText}>🔑 Entrar na Minha Conta</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity 
           style={styles.button} 
           activeOpacity={0.85}
           onPress={() => navigation.navigate('Cadastro')}
@@ -27,19 +35,11 @@ export default function Home({ navigation }: Props) {
         </TouchableOpacity>
 
         <TouchableOpacity
-          style={styles.ongButton}
-          activeOpacity={0.85}
-          onPress={() => navigation.navigate('CadastroCompleto')}
-        >
-          <Text style={styles.ongButtonText}>🏢 Cadastrar Minha ONG (Completo)</Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
           style={styles.secondaryButton}
           activeOpacity={0.85}
           onPress={() => navigation.navigate('Feed')}
         >
-          <Text style={styles.secondaryButtonText}>Ver Feed da Comunidade</Text>
+          <Text style={styles.secondaryButtonText}>Ver Feed como Visitante</Text>
         </TouchableOpacity>
       </View>
     </View>
@@ -79,6 +79,21 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 22,
     marginBottom: 30,
+  },
+  loginButton: {
+    backgroundColor: colors.brandGreenDark,
+    width: '100%',
+    paddingVertical: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    borderBottomWidth: 3,
+    borderBottomColor: '#1E3608',
+    marginBottom: 12,
+  },
+  loginButtonText: {
+    color: colors.textLight,
+    fontSize: 17,
+    fontWeight: 'bold',
   },
   button: {
     backgroundColor: colors.primary,
