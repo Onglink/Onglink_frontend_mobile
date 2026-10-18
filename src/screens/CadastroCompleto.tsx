@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -15,11 +15,21 @@ import {
   Modal,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
+import * as DocumentPicker from 'expo-document-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
 import { buscarCep } from '../services/cep';
 import ongService from '../services/ongService';
+import { getUsuarioLogado } from '../services/usuarioService';
+import uploadService from '../services/uploadService';
+
+export interface DocumentoAnexo {
+  uri: string;
+  name: string;
+  mimeType?: string;
+  size?: number;
+}
 
 type Props = NativeStackScreenProps<RootStackParamList, 'CadastroCompleto'>;
 
@@ -92,6 +102,26 @@ export default function CadastroCompleto({ navigation }: Props) {
   const { width } = useWindowDimensions();
   const isTablet = width > 600;
 
+  useEffect(() => {
+    const usuarioLogado = getUsuarioLogado();
+    if (!usuarioLogado?._id) {
+      Alert.alert(
+        'Login Obrigatório',
+        'O cadastro completo de ONG é exclusivo para usuários autenticados. Faça seu login para continuar.',
+        [
+          {
+            text: 'Ir para o Login',
+            onPress: () => navigation.replace('Login'),
+          },
+          {
+            text: 'Voltar',
+            onPress: () => navigation.goBack(),
+          },
+        ]
+      );
+    }
+  }, [navigation]);
+
   const [activeStep, setActiveStep] = useState<number>(0);
   const [loadingCep, setLoadingCep] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -129,9 +159,9 @@ export default function CadastroCompleto({ navigation }: Props) {
 
   // ---------------- ETAPA 4: ANEXOS & DOCUMENTOS ----------------
   const [logoUri, setLogoUri] = useState<string | null>(null);
-  const [documento1Uri, setDocumento1Uri] = useState<string | null>(null);
-  const [documento2Uri, setDocumento2Uri] = useState<string | null>(null);
-  const [imagemAcaoUri, setImagemAcaoUri] = useState<string | null>(null);
+  const [documento1, setDocumento1] = useState<DocumentoAnexo | null>(null);
+  const [documento2, setDocumento2] = useState<DocumentoAnexo | null>(null);
+  const [uploadStatusText, setUploadStatusText] = useState<string>('');
 
   const steps = ['Básico', 'Endereço', 'Redes', 'Documentos'];
 
@@ -201,17 +231,15 @@ export default function CadastroCompleto({ navigation }: Props) {
     }
   };
 
-  // Selecionador de Imagem com Expo ImagePicker
-  const handlePickImage = async (
-    tipo: 'logo' | 'documento1' | 'documento2' | 'acao'
-  ) => {
+  // Selecionador de Imagem com Expo ImagePicker (Logo da ONG)
+  const handlePickLogo = async () => {
     try {
       const permissionResult =
         await ImagePicker.requestMediaLibraryPermissionsAsync();
       if (!permissionResult.granted) {
         Alert.alert(
           'Permissão necessária',
-          'É necessário permitir o acesso à galeria para selecionar imagens.'
+          'É necessário permitir o acesso à galeria para selecionar a Logo.'
         );
         return;
       }
@@ -223,16 +251,52 @@ export default function CadastroCompleto({ navigation }: Props) {
       });
 
       if (!result.canceled && result.assets && result.assets.length > 0) {
-        const uri = result.assets[0].uri;
-        if (tipo === 'logo') setLogoUri(uri);
-        else if (tipo === 'documento1') setDocumento1Uri(uri);
-        else if (tipo === 'documento2') setDocumento2Uri(uri);
-        else if (tipo === 'acao') setImagemAcaoUri(uri);
+        setLogoUri(result.assets[0].uri);
       }
     } catch (error) {
-      console.error('Erro ao escolher imagem:', error);
+      console.error('Erro ao escolher logo:', error);
       Alert.alert('Erro', 'Não foi possível carregar a imagem selecionada.');
     }
+  };
+
+  // Selecionador de Documentos com Expo DocumentPicker (PDF ou imagens)
+  const handlePickDocument = async (numero: 1 | 2) => {
+    try {
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'image/*'],
+        copyToCacheDirectory: true,
+      });
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const asset = result.assets[0];
+        const novoDoc: DocumentoAnexo = {
+          uri: asset.uri,
+          name: asset.name || (numero === 1 ? 'estatuto_social.pdf' : 'ata_eleicao.pdf'),
+          mimeType:
+            asset.mimeType ||
+            (asset.name?.toLowerCase().endsWith('.pdf')
+              ? 'application/pdf'
+              : 'image/jpeg'),
+          size: asset.size,
+        };
+
+        if (numero === 1) {
+          setDocumento1(novoDoc);
+        } else {
+          setDocumento2(novoDoc);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao selecionar documento:', error);
+      Alert.alert('Erro', 'Não foi possível carregar o documento selecionado.');
+    }
+  };
+
+  const formatFileSize = (bytes?: number) => {
+    if (!bytes) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   // Validação por etapa
@@ -327,52 +391,89 @@ export default function CadastroCompleto({ navigation }: Props) {
   const handleFinalizar = async () => {
     if (!validarEtapa(3)) return;
 
-    setSubmitting(true);
+    const usuarioLogado = getUsuarioLogado();
+    if (!usuarioLogado?._id) {
+      Alert.alert(
+        'Login Necessário',
+        'Para cadastrar sua ONG e vinculá-la ao seu perfil, faça login primeiro.',
+        [
+          { text: 'Cancelar', style: 'cancel' },
+          { text: 'Fazer Login', onPress: () => navigation.navigate('Login') },
+        ]
+      );
+      return;
+    }
 
-    const dadosOng = {
-      razaoSocial: razaoSocial.trim(),
-      nomeFantasia: nomeFantasia.trim(),
-      cnpj: cnpj.trim(),
-      repLegal: repLegal.trim(),
-      cpf: cpf.trim(),
-      telefone: telefone.trim(),
-      email: email.trim().toLowerCase(),
-      causaSocial,
-      descricao: descricao.trim(),
-      dataFund: new Date().toISOString(),
-      endereco: {
-        rua: rua.trim(),
-        numeroEnd: numeroEnd.trim(),
-        complemento: complemento.trim(),
-        bairro: bairro.trim(),
-        cidade: cidade.trim(),
-        estado: estado.trim().toUpperCase(),
-        cep: cep.trim(),
-      },
-      redeSocial: {
-        instagram: instagram.trim() || 'N/A',
-        facebook: facebook.trim() || 'N/A',
-        linkedin: linkedin.trim() || 'N/A',
-        site: site.trim() || 'N/A',
-      },
-      logo: logoUri || '',
-      arquivosLegais: [documento1Uri, documento2Uri].filter(Boolean) as string[],
-      imagens: [logoUri].filter(Boolean) as string[],
-    };
+    setSubmitting(true);
+    setUploadStatusText('Enviando arquivos para o Cloudinary...');
 
     try {
+      console.log('🚀 Iniciando uploads para o Cloudinary no mobile...');
+      // Upload simultâneo para o Cloudinary para reduzir uso de armazenamento no MongoDB
+      const [logoUrl, doc1Url, doc2Url] = await Promise.all([
+        uploadService(logoUri),
+        documento1 ? uploadService(documento1) : Promise.resolve(null),
+        documento2 ? uploadService(documento2) : Promise.resolve(null),
+      ]);
+
+      if (!logoUrl) {
+        throw new Error('É obrigatório fazer o upload da Logo da ONG.');
+      }
+
+      setUploadStatusText('Finalizando cadastro no servidor...');
+
+      const dadosOng = {
+        razaoSocial: razaoSocial.trim(),
+        nomeFantasia: nomeFantasia.trim(),
+        cnpj: cnpj.trim(),
+        repLegal: repLegal.trim(),
+        cpf: cpf.trim(),
+        telefone: telefone.trim(),
+        email: email.trim().toLowerCase(),
+        causaSocial,
+        descricao: descricao.trim(),
+        dataFund: new Date().toISOString(),
+        endereco: {
+          rua: rua.trim(),
+          numeroEnd: numeroEnd.trim(),
+          complemento: complemento.trim(),
+          bairro: bairro.trim(),
+          cidade: cidade.trim(),
+          estado: estado.trim().toUpperCase(),
+          cep: cep.trim(),
+        },
+        redeSocial: {
+          instagram: instagram.trim() || 'N/A',
+          facebook: facebook.trim() || 'N/A',
+          linkedin: linkedin.trim() || 'N/A',
+          site: site.trim() || 'N/A',
+        },
+        logo: logoUrl,
+        arquivosLegais: [doc1Url, doc2Url].filter(
+          (url): url is string => typeof url === 'string' && url.length > 0
+        ),
+        imagens: [logoUrl],
+        assignedTo: [usuarioLogado._id],
+      };
+
+      console.log('📦 Enviando dados para o backend com URLs do Cloudinary:', {
+        logo: dadosOng.logo,
+        arquivosLegais: dadosOng.arquivosLegais,
+      });
+
       const response = await ongService.cadastrarOng(dadosOng);
       Alert.alert(
-        'Cadastro Realizado!',
-        response.message || 'A sua solicitação de cadastro de ONG foi enviada com sucesso e está em análise pela equipe Onglink.',
+        'Solicitação Enviada!',
+        response.message ||
+          'O cadastro da sua ONG foi enviado para análise da administração. Assim que for aprovado, seu status mudará de "user" para "ONG" e você poderá criar publicações.',
         [
           {
             text: 'Ir para o Feed',
-            onPress: () => navigation.navigate('Feed'),
+            onPress: () => navigation.replace('Feed', { usuario: usuarioLogado }),
           },
           {
             text: 'OK',
-            onPress: () => navigation.navigate('Home'),
+            onPress: () => navigation.replace('Home'),
           },
         ]
       );
@@ -380,10 +481,11 @@ export default function CadastroCompleto({ navigation }: Props) {
       console.error('Erro no cadastro da ONG:', error);
       Alert.alert(
         'Erro ao cadastrar ONG',
-        error.message || 'Não foi possível conectar com o servidor.'
+        error.message || 'Não foi possível enviar os arquivos ou salvar a ONG.'
       );
     } finally {
       setSubmitting(false);
+      setUploadStatusText('');
     }
   };
 
@@ -833,7 +935,7 @@ export default function CadastroCompleto({ navigation }: Props) {
                     <View style={styles.previewActions}>
                       <TouchableOpacity
                         style={styles.btnChange}
-                        onPress={() => handlePickImage('logo')}
+                        onPress={handlePickLogo}
                       >
                         <Text style={styles.btnChangeText}>Trocar Logo</Text>
                       </TouchableOpacity>
@@ -849,14 +951,14 @@ export default function CadastroCompleto({ navigation }: Props) {
                   <TouchableOpacity
                     style={styles.uploadPlaceholder}
                     activeOpacity={0.8}
-                    onPress={() => handlePickImage('logo')}
+                    onPress={handlePickLogo}
                   >
                     <Text style={styles.uploadIcon}>📷</Text>
                     <Text style={styles.uploadPlaceholderTitle}>
                       Toque para anexar a Logo da ONG
                     </Text>
                     <Text style={styles.uploadPlaceholderSubtitle}>
-                      Formatos recomendados: PNG ou JPEG
+                      Formatos aceitos: PNG ou JPEG (Upload via Cloudinary)
                     </Text>
                   </TouchableOpacity>
                 )}
@@ -864,58 +966,134 @@ export default function CadastroCompleto({ navigation }: Props) {
 
               {/* Documento Legal 1 */}
               <View style={styles.uploadBlock}>
-                <Text style={styles.label}>Estatuto Social / Fundação (Foto)</Text>
-                {documento1Uri ? (
-                  <View style={styles.previewContainer}>
-                    <Image
-                      source={{ uri: documento1Uri }}
-                      style={styles.docPreview}
-                    />
+                <Text style={styles.label}>Estatuto Social / Fundação (PDF ou Imagem)</Text>
+                {documento1 ? (
+                  <View style={styles.docCardContainer}>
+                    <View style={styles.docCardIconBadge}>
+                      <Text style={styles.docCardIconText}>
+                        {documento1.mimeType?.includes('pdf') ||
+                        documento1.name.toLowerCase().endsWith('.pdf')
+                          ? '📕'
+                          : '🖼️'}
+                      </Text>
+                    </View>
+                    <View style={styles.docCardInfo}>
+                      <Text
+                        style={styles.docCardName}
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                      >
+                        {documento1.name}
+                      </Text>
+                      <View style={styles.docCardMetaRow}>
+                        <Text style={styles.docCardBadge}>
+                          {documento1.mimeType?.includes('pdf') ||
+                          documento1.name.toLowerCase().endsWith('.pdf')
+                            ? 'PDF'
+                            : 'IMAGEM'}
+                        </Text>
+                        {documento1.size ? (
+                          <Text style={styles.docCardSize}>
+                            {formatFileSize(documento1.size)}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.docCardCloudinary}>• Cloudinary</Text>
+                      </View>
+                    </View>
                     <TouchableOpacity
-                      style={styles.btnRemove}
-                      onPress={() => setDocumento1Uri(null)}
+                      style={styles.docCardRemoveBtn}
+                      onPress={() => setDocumento1(null)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
-                      <Text style={styles.btnRemoveText}>Remover Documento</Text>
+                      <Text style={styles.docCardRemoveText}>✕</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
                   <TouchableOpacity
-                    style={styles.uploadPlaceholderSmall}
+                    style={styles.uploadPlaceholderDoc}
                     activeOpacity={0.8}
-                    onPress={() => handlePickImage('documento1')}
+                    onPress={() => handlePickDocument(1)}
                   >
-                    <Text style={styles.uploadPlaceholderTitleSmall}>
-                      📄 Anexar Estatuto Social
-                    </Text>
+                    <Text style={styles.uploadDocIcon}>📄</Text>
+                    <View style={styles.uploadDocTextCol}>
+                      <Text style={styles.uploadDocTitle}>
+                        Anexar Estatuto Social
+                      </Text>
+                      <Text style={styles.uploadDocSubtitle}>
+                        Selecione PDF ou foto do documento
+                      </Text>
+                    </View>
+                    <View style={styles.uploadDocActionBadge}>
+                      <Text style={styles.uploadDocActionText}>Escolher</Text>
+                    </View>
                   </TouchableOpacity>
                 )}
               </View>
 
               {/* Documento Legal 2 */}
               <View style={styles.uploadBlock}>
-                <Text style={styles.label}>Ata de Eleição / Documento do Responsável</Text>
-                {documento2Uri ? (
-                  <View style={styles.previewContainer}>
-                    <Image
-                      source={{ uri: documento2Uri }}
-                      style={styles.docPreview}
-                    />
+                <Text style={styles.label}>
+                  Ata de Eleição / Documento do Responsável (PDF ou Imagem)
+                </Text>
+                {documento2 ? (
+                  <View style={styles.docCardContainer}>
+                    <View style={styles.docCardIconBadge}>
+                      <Text style={styles.docCardIconText}>
+                        {documento2.mimeType?.includes('pdf') ||
+                        documento2.name.toLowerCase().endsWith('.pdf')
+                          ? '📕'
+                          : '🖼️'}
+                      </Text>
+                    </View>
+                    <View style={styles.docCardInfo}>
+                      <Text
+                        style={styles.docCardName}
+                        numberOfLines={1}
+                        ellipsizeMode="middle"
+                      >
+                        {documento2.name}
+                      </Text>
+                      <View style={styles.docCardMetaRow}>
+                        <Text style={styles.docCardBadge}>
+                          {documento2.mimeType?.includes('pdf') ||
+                          documento2.name.toLowerCase().endsWith('.pdf')
+                            ? 'PDF'
+                            : 'IMAGEM'}
+                        </Text>
+                        {documento2.size ? (
+                          <Text style={styles.docCardSize}>
+                            {formatFileSize(documento2.size)}
+                          </Text>
+                        ) : null}
+                        <Text style={styles.docCardCloudinary}>• Cloudinary</Text>
+                      </View>
+                    </View>
                     <TouchableOpacity
-                      style={styles.btnRemove}
-                      onPress={() => setDocumento2Uri(null)}
+                      style={styles.docCardRemoveBtn}
+                      onPress={() => setDocumento2(null)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     >
-                      <Text style={styles.btnRemoveText}>Remover Documento</Text>
+                      <Text style={styles.docCardRemoveText}>✕</Text>
                     </TouchableOpacity>
                   </View>
                 ) : (
                   <TouchableOpacity
-                    style={styles.uploadPlaceholderSmall}
+                    style={styles.uploadPlaceholderDoc}
                     activeOpacity={0.8}
-                    onPress={() => handlePickImage('documento2')}
+                    onPress={() => handlePickDocument(2)}
                   >
-                    <Text style={styles.uploadPlaceholderTitleSmall}>
-                      📄 Anexar Ata ou Documento
-                    </Text>
+                    <Text style={styles.uploadDocIcon}>📄</Text>
+                    <View style={styles.uploadDocTextCol}>
+                      <Text style={styles.uploadDocTitle}>
+                        Anexar Ata ou Documento
+                      </Text>
+                      <Text style={styles.uploadDocSubtitle}>
+                        Selecione PDF ou foto do documento
+                      </Text>
+                    </View>
+                    <View style={styles.uploadDocActionBadge}>
+                      <Text style={styles.uploadDocActionText}>Escolher</Text>
+                    </View>
                   </TouchableOpacity>
                 )}
               </View>
@@ -956,7 +1134,12 @@ export default function CadastroCompleto({ navigation }: Props) {
                 disabled={submitting}
               >
                 {submitting ? (
-                  <ActivityIndicator color={colors.textLight} />
+                  <View style={styles.submittingRow}>
+                    <ActivityIndicator color={colors.textLight} size="small" />
+                    <Text style={styles.submittingText}>
+                      {uploadStatusText || 'Processando...'}
+                    </Text>
+                  </View>
                 ) : (
                   <Text style={styles.btnFinalizarText}>
                     Finalizar Cadastro de ONG
@@ -1532,5 +1715,129 @@ const styles = StyleSheet.create({
   },
   btnDisabled: {
     opacity: 0.7,
+  },
+  submittingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  submittingText: {
+    color: colors.textLight,
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  uploadPlaceholderDoc: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: '#D4E2E6',
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    backgroundColor: '#F7FCFD',
+  },
+  uploadDocIcon: {
+    fontSize: 24,
+    marginRight: 10,
+  },
+  uploadDocTextCol: {
+    flex: 1,
+  },
+  uploadDocTitle: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.textPrimary,
+  },
+  uploadDocSubtitle: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
+  uploadDocActionBadge: {
+    backgroundColor: colors.primary,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 6,
+  },
+  uploadDocActionText: {
+    color: colors.textLight,
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  docCardContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F0F9FA',
+    borderWidth: 1,
+    borderColor: '#C7EAF0',
+    borderRadius: 10,
+    padding: 12,
+  },
+  docCardIconBadge: {
+    width: 40,
+    height: 40,
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  docCardIconText: {
+    fontSize: 20,
+  },
+  docCardInfo: {
+    flex: 1,
+    marginRight: 8,
+  },
+  docCardName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.textPrimary,
+  },
+  docCardMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 3,
+  },
+  docCardBadge: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: colors.primary,
+    backgroundColor: '#E1F6F8',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  docCardSize: {
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  docCardCloudinary: {
+    fontSize: 11,
+    color: colors.brandGreenDark,
+    fontWeight: '500',
+  },
+  docCardRemoveBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#FFEBEE',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#FFCDD2',
+  },
+  docCardRemoveText: {
+    color: colors.error,
+    fontSize: 12,
+    fontWeight: 'bold',
   },
 });
