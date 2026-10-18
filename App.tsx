@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import Home from './src/screens/Home';
 import CadastroSimples from './src/screens/CadastroSimples';
+import CadastroCompleto from './src/screens/CadastroCompleto';
 import Feed from './src/screens/Feed';
 import Perfil from './src/screens/Perfil';
 import { colors } from './src/utils/theme';
@@ -28,6 +29,7 @@ export type ProfilePost = {
 export type RootStackParamList = {
   Home: undefined;
   Cadastro: undefined;
+  CadastroCompleto: undefined;
   Feed: undefined;
   Perfil: { posts?: ProfilePost[] } | undefined;
 };
@@ -60,6 +62,11 @@ export default function App() {
           name="Cadastro"
           component={CadastroSimples}
           options={{ title: 'Criar Conta' }}
+        />
+        <Stack.Screen
+          name="CadastroCompleto"
+          component={CadastroCompleto}
+          options={{ title: 'Cadastro de ONG' }}
         />
         <Stack.Screen
           name="Feed"
