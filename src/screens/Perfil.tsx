@@ -1,222 +1,246 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
 	Alert,
 	Image,
-	KeyboardAvoidingView,
-	Platform,
 	Pressable,
 	ScrollView,
 	StyleSheet,
 	Text,
-	TextInput,
+	TouchableOpacity,
 	View,
 	useWindowDimensions,
+	RefreshControl,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ProfilePost, RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
+import usuarioService, { getUsuarioLogado, UsuarioResponse } from '../services/usuarioService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Perfil'>;
 
-type ProfileDetails = {
-	nome: string;
-	contato: string;
-	telefone: string;
-	email: string;
-	endereco: string;
-};
-
-const INITIAL_PROFILE: ProfileDetails = {
-	nome: 'Mariana Costa',
-	contato: 'Contato preferencial: WhatsApp',
-	telefone: '(15) 99876-5432',
-	email: 'mariana.costa@email.com',
-	endereco: 'Votorantim, SP',
-};
-
-export default function Perfil({ route }: Props) {
+export default function Perfil({ route, navigation }: Props) {
 	const { width } = useWindowDimensions();
 	const isTablet = width > 600;
 	const posts = route.params?.posts ?? [];
-	const [profile, setProfile] = useState<ProfileDetails>(INITIAL_PROFILE);
-	const [draft, setDraft] = useState<ProfileDetails>(INITIAL_PROFILE);
-	const [isEditing, setIsEditing] = useState(false);
+	const initialUser = route.params?.usuario || getUsuarioLogado();
 
-	const startEditing = () => {
-		setDraft(profile);
-		setIsEditing(true);
-	};
+	const [currentUser, setCurrentUser] = useState<UsuarioResponse | null>(initialUser);
+	const [refreshing, setRefreshing] = useState(false);
 
-	const cancelEditing = () => {
-		setDraft(profile);
-		setIsEditing(false);
-	};
-
-	const saveProfile = () => {
-		const requiredFields: (keyof ProfileDetails)[] = [
-			'nome', 'contato', 'telefone', 'email', 'endereco',
-		];
-
-		if (requiredFields.some((field) => !draft[field].trim())) {
-			Alert.alert('Campos obrigatórios', 'Preencha todos os dados do perfil antes de salvar.');
-			return;
+	// Consulta o backend para checar se a administração alterou o status do usuário (ex: de 'user' para 'ong')
+	const carregarDadosAtualizados = useCallback(async () => {
+		if (!initialUser?._id) return;
+		try {
+			const atualizado = await usuarioService.buscarPorId(initialUser._id);
+			if (atualizado) {
+				setCurrentUser(atualizado);
+			}
+		} catch {
+			// Mantém os dados da sessão se estiver sem rede
 		}
-		if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draft.email.trim())) {
-			Alert.alert('E-mail inválido', 'Informe um endereço de e-mail válido.');
-			return;
-		}
+	}, [initialUser?._id]);
 
-		const savedProfile = {
-			nome: draft.nome.trim(),
-			contato: draft.contato.trim(),
-			telefone: draft.telefone.trim(),
-			email: draft.email.trim(),
-			endereco: draft.endereco.trim(),
-		};
-		setProfile(savedProfile);
-		setDraft(savedProfile);
-		setIsEditing(false);
-		Alert.alert('Perfil atualizado', 'Suas informações foram atualizadas.');
+	useEffect(() => {
+		carregarDadosAtualizados();
+	}, [carregarDadosAtualizados]);
+
+	const onRefresh = useCallback(async () => {
+		setRefreshing(true);
+		await carregarDadosAtualizados();
+		setRefreshing(false);
+	}, [carregarDadosAtualizados]);
+
+	const handleLogout = () => {
+		Alert.alert(
+			'Sair da Conta',
+			'Deseja realmente sair da sua conta?',
+			[
+				{ text: 'Cancelar', style: 'cancel' },
+				{
+					text: 'Sair',
+					style: 'destructive',
+					onPress: () => {
+						usuarioService.logout();
+						navigation.reset({
+							index: 0,
+							routes: [{ name: 'Home' }],
+						});
+					},
+				},
+			]
+		);
 	};
 
-	return (
-		<KeyboardAvoidingView
-			behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-			style={styles.screen}
-		>
-			<ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+	// Caso não esteja logado (modo visitante)
+	if (!currentUser) {
+		return (
+			<ScrollView
+				style={styles.screen}
+				contentContainerStyle={styles.scrollContent}
+			>
 				<View style={[styles.content, isTablet && styles.tabletContent]}>
 					<View style={styles.profileCard}>
-						<View style={styles.profileHeading}>
-							<View style={styles.avatar}>
-								<Text style={styles.avatarText}>{getInitials(profile.nome)}</Text>
-							</View>
-							<View style={styles.profileHeadingText}>
-								<Text style={styles.name}>{profile.nome}</Text>
-								<Text style={styles.contact}>{profile.contato}</Text>
+						<View style={styles.emptyIcon}>
+							<Text style={styles.emptyIconText}>👤</Text>
+						</View>
+						<Text style={styles.emptyTitle}>Nenhum usuário conectado</Text>
+						<Text style={styles.emptyDescription}>
+							Você está navegando como visitante. Acesse sua conta ou faça seu cadastro para visualizar seu perfil.
+						</Text>
+						<TouchableOpacity
+							style={styles.loginActionBtn}
+							onPress={() => navigation.navigate('Login')}
+							activeOpacity={0.85}
+						>
+							<Text style={styles.loginActionText}>Fazer Login</Text>
+						</TouchableOpacity>
+						<TouchableOpacity
+							style={styles.registerActionBtn}
+							onPress={() => navigation.navigate('Cadastro')}
+							activeOpacity={0.85}
+						>
+							<Text style={styles.registerActionText}>Criar Nova Conta</Text>
+						</TouchableOpacity>
+					</View>
+				</View>
+			</ScrollView>
+		);
+	}
+
+	const isUserComum = currentUser.status === 'user';
+	const isOng = currentUser.status === 'ong';
+	const isAdmin = currentUser.status === 'admin';
+
+	return (
+		<ScrollView
+			style={styles.screen}
+			contentContainerStyle={styles.scrollContent}
+			refreshControl={
+				<RefreshControl
+					refreshing={refreshing}
+					onRefresh={onRefresh}
+					colors={[colors.primary]}
+					tintColor={colors.primary}
+				/>
+			}
+		>
+			<View style={[styles.content, isTablet && styles.tabletContent]}>
+				{/* Cartão de Informações Básicas do Usuário */}
+				<View style={styles.profileCard}>
+					<View style={styles.profileHeading}>
+						<View style={[styles.avatar, isUserComum && styles.avatarUser]}>
+							<Text style={[styles.avatarText, isUserComum && styles.avatarTextUser]}>
+								{getInitials(currentUser.nome || 'ON')}
+							</Text>
+						</View>
+						<View style={styles.profileHeadingText}>
+							<Text style={styles.name}>{currentUser.nome}</Text>
+							<View style={styles.badgeRow}>
+								{isOng && (
+									<View style={styles.statusBadgeOng}>
+										<Text style={styles.statusBadgeOngText}>🏢 ONG Aprovada</Text>
+									</View>
+								)}
+								{isAdmin && (
+									<View style={styles.statusBadgeAdmin}>
+										<Text style={styles.statusBadgeAdminText}>👑 Administrador</Text>
+									</View>
+								)}
+								{isUserComum && (
+									<View style={styles.statusBadgeUser}>
+										<Text style={styles.statusBadgeUserText}>🤝 Voluntário (Usuário)</Text>
+									</View>
+								)}
 							</View>
 						</View>
-
-						<View style={styles.profileActions}>
-							<Text style={styles.sectionEyebrow}>SEU PERFIL</Text>
-							{!isEditing && (
-								<Pressable
-									accessibilityRole="button"
-									onPress={startEditing}
-									style={styles.editButton}
-								>
-									<Text style={styles.editButtonText}>Editar</Text>
-								</Pressable>
-							)}
-						</View>
-
-						{isEditing ? (
-							<View style={styles.form}>
-								<ProfileInput
-									label="Nome"
-									value={draft.nome}
-									onChangeText={(nome) => setDraft((current) => ({ ...current, nome }))}
-									autoCapitalize="words"
-								/>
-								<ProfileInput
-									label="Contato"
-									value={draft.contato}
-									onChangeText={(contato) => setDraft((current) => ({ ...current, contato }))}
-								/>
-								<ProfileInput
-									label="Telefone"
-									value={draft.telefone}
-									onChangeText={(telefone) => setDraft((current) => ({ ...current, telefone }))}
-									keyboardType="phone-pad"
-								/>
-								<ProfileInput
-									label="E-mail"
-									value={draft.email}
-									onChangeText={(email) => setDraft((current) => ({ ...current, email }))}
-									keyboardType="email-address"
-									autoCapitalize="none"
-								/>
-								<ProfileInput
-									label="Endereço"
-									value={draft.endereco}
-									onChangeText={(endereco) => setDraft((current) => ({ ...current, endereco }))}
-									autoCapitalize="words"
-								/>
-								<View style={styles.formActions}>
-									<Pressable
-										accessibilityRole="button"
-										onPress={cancelEditing}
-										style={styles.cancelButton}
-									>
-										<Text style={styles.cancelButtonText}>Cancelar</Text>
-									</Pressable>
-									<Pressable
-										accessibilityRole="button"
-										onPress={saveProfile}
-										style={styles.saveButton}
-									>
-										<Text style={styles.saveButtonText}>Salvar alterações</Text>
-									</Pressable>
-								</View>
-							</View>
-						) : (
-							<View style={styles.details}>
-								<ProfileDetail label="Contato" value={profile.contato} />
-								<ProfileDetail label="Telefone" value={profile.telefone} />
-								<ProfileDetail label="E-mail" value={profile.email} />
-								<ProfileDetail label="Endereço" value={profile.endereco} last />
-							</View>
-						)}
 					</View>
 
-					<View style={styles.publicationsHeader}>
-						<View>
+					{/* Título da Seção */}
+					<View style={styles.profileActions}>
+						<Text style={styles.sectionEyebrow}>DADOS DO CADASTRO SIMPLES</Text>
+					</View>
+
+					{/* Apenas informações básicas cadastradas */}
+					<View style={styles.details}>
+						<ProfileDetail label="Nome Completo" value={currentUser.nome} />
+						<ProfileDetail label="CPF" value={currentUser.cpf || 'Não informado'} />
+						<ProfileDetail label="E-mail" value={currentUser.email} />
+						<ProfileDetail
+							label="Status da Conta"
+							value={
+								isOng
+									? 'ONG Autorizada pela Administração'
+									: isAdmin
+									? 'Administrador do Sistema'
+									: 'Usuário Comum (Aguardando Aprovação de ONG)'
+							}
+							last
+						/>
+					</View>
+				</View>
+
+				{/* Bloco Explicativo para Usuário Comum ("user") */}
+				{isUserComum && (
+					<View style={styles.infoCard}>
+						<Text style={styles.infoCardTitle}>
+							{currentUser.assignedTo
+								? '⏳ Cadastro de ONG em Análise'
+								: '📢 Quer criar publicações no Feed?'}
+						</Text>
+						<Text style={styles.infoCardDescription}>
+							{currentUser.assignedTo
+								? 'Sua solicitação de ONG foi enviada e está sob análise da administração do sistema. Assim que for autorizada pela equipe, seu status mudará automaticamente para "ONG" e a postagem no Feed será liberada.'
+								: 'Usuários com perfil de cadastro simples possuem acesso de visualização e apoio. Para publicar campanhas e ações no Feed, conclua o cadastro completo da sua organização social e aguarde a aprovação da administração.'}
+						</Text>
+
+						{!currentUser.assignedTo && (
+							<TouchableOpacity
+								style={styles.cadastrarOngBtn}
+								activeOpacity={0.85}
+								onPress={() => navigation.navigate('CadastroCompleto')}
+							>
+								<Text style={styles.cadastrarOngBtnText}>🏢 Cadastrar Minha ONG (Completo)</Text>
+							</TouchableOpacity>
+						)}
+					</View>
+				)}
+
+				{/* Seção de Publicações exclusiva para contas autorizadas como ONG */}
+				{(isOng || isAdmin) && (
+					<>
+						<View style={styles.publicationsHeader}>
 							<Text style={styles.publicationsTitle}>Minhas publicações</Text>
 							<Text style={styles.publicationsCount}>
 								{posts.length} {posts.length === 1 ? 'publicação' : 'publicações'}
 							</Text>
 						</View>
-					</View>
 
-					{posts.length ? (
-						<View style={styles.postList}>
-							{posts.map((post) => <PublicationCard key={post.id} post={post} />)}
-						</View>
-					) : (
-						<View style={styles.emptyState}>
-							<View style={styles.emptyIcon}><Text style={styles.emptyIconText}>+</Text></View>
-							<Text style={styles.emptyTitle}>Nenhuma publicação por aqui</Text>
-							<Text style={styles.emptyDescription}>
-								Quando você compartilhar algo no feed, suas publicações aparecerão nesta página.
-							</Text>
-						</View>
-					)}
-				</View>
-			</ScrollView>
-		</KeyboardAvoidingView>
-	);
-}
+						{posts.length ? (
+							<View style={styles.postList}>
+								{posts.map((post) => <PublicationCard key={post.id} post={post} />)}
+							</View>
+						) : (
+							<View style={styles.emptyState}>
+								<View style={styles.emptyIcon}><Text style={styles.emptyIconText}>📝</Text></View>
+								<Text style={styles.emptyTitle}>Nenhuma publicação ativa</Text>
+								<Text style={styles.emptyDescription}>
+									Suas postagens divulgadas no feed da comunidade aparecerão listadas aqui.
+								</Text>
+							</View>
+						)}
+					</>
+				)}
 
-function ProfileInput({
-	label,
-	...inputProps
-}: {
-	label: string;
-	value: string;
-	onChangeText: (value: string) => void;
-	keyboardType?: 'default' | 'email-address' | 'phone-pad';
-	autoCapitalize?: 'none' | 'sentences' | 'words' | 'characters';
-}) {
-	return (
-		<View style={styles.inputGroup}>
-			<Text style={styles.inputLabel}>{label}</Text>
-			<TextInput
-				{...inputProps}
-				style={styles.input}
-				placeholderTextColor={colors.textMuted}
-				returnKeyType="done"
-			/>
-		</View>
+				{/* Botão de Logout */}
+				<TouchableOpacity
+					style={styles.logoutButton}
+					activeOpacity={0.85}
+					onPress={handleLogout}
+				>
+					<Text style={styles.logoutButtonText}>🚪 Sair da Minha Conta</Text>
+				</TouchableOpacity>
+			</View>
+		</ScrollView>
 	);
 }
 
@@ -262,11 +286,11 @@ function getInitials(name: string) {
 
 const styles = StyleSheet.create({
 	screen: { backgroundColor: colors.background, flex: 1 },
-	scrollContent: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 20, paddingBottom: 32 },
+	scrollContent: { alignItems: 'center', paddingHorizontal: 20, paddingVertical: 20, paddingBottom: 40 },
 	content: { width: '100%', gap: 16 },
-	tabletContent: { maxWidth: 700 },
+	tabletContent: { maxWidth: 680 },
 	profileCard: {
-		backgroundColor: colors.cardBackground, borderRadius: 15, elevation: 3, padding: 20,
+		backgroundColor: colors.cardBackground, borderRadius: 16, elevation: 3, padding: 22,
 		shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.08, shadowRadius: 5,
 	},
 	profileHeading: {
@@ -275,49 +299,95 @@ const styles = StyleSheet.create({
 	},
 	avatar: {
 		alignItems: 'center', backgroundColor: colors.brandGreenLight, borderColor: colors.brandGreen,
-		borderRadius: 34, borderWidth: 2, height: 68, justifyContent: 'center', marginRight: 14, width: 68,
+		borderRadius: 34, borderWidth: 2, height: 68, justifyContent: 'center', marginRight: 16, width: 68,
 	},
-	avatarText: { color: colors.brandGreenDark, fontSize: 20, fontWeight: '700' },
+	avatarUser: {
+		backgroundColor: '#E8F5F8',
+		borderColor: colors.primary,
+	},
+	avatarText: { color: colors.brandGreenDark, fontSize: 22, fontWeight: '700' },
+	avatarTextUser: { color: colors.primary },
 	profileHeadingText: { flex: 1 },
-	name: { color: colors.textPrimary, fontSize: 21, fontWeight: '700' },
-	contact: { color: colors.textSecondary, fontSize: 14, marginTop: 4 },
+	name: { color: colors.textPrimary, fontSize: 20, fontWeight: '700' },
+	badgeRow: { marginTop: 6 },
+	statusBadgeOng: {
+		alignSelf: 'flex-start',
+		backgroundColor: '#E8F5E9',
+		paddingHorizontal: 10,
+		paddingVertical: 4,
+		borderRadius: 12,
+		borderWidth: 1,
+		borderColor: '#A5D6A7',
+	},
+	statusBadgeOngText: { color: '#2E7D32', fontSize: 12, fontWeight: '700' },
+	statusBadgeAdmin: {
+		alignSelf: 'flex-start',
+		backgroundColor: '#EDE7F6',
+		paddingHorizontal: 10,
+		paddingVertical: 4,
+		borderRadius: 12,
+		borderWidth: 1,
+		borderColor: '#D1C4E9',
+	},
+	statusBadgeAdminText: { color: '#512DA8', fontSize: 12, fontWeight: '700' },
+	statusBadgeUser: {
+		alignSelf: 'flex-start',
+		backgroundColor: '#E1F5FE',
+		paddingHorizontal: 10,
+		paddingVertical: 4,
+		borderRadius: 12,
+		borderWidth: 1,
+		borderColor: '#B3E5FC',
+	},
+	statusBadgeUserText: { color: '#0277BD', fontSize: 12, fontWeight: '700' },
 	profileActions: {
-		alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginBottom: 8, marginTop: 16,
+		marginBottom: 8, marginTop: 16,
 	},
-	sectionEyebrow: { color: colors.brandGreenDark, fontSize: 12, fontWeight: '700', letterSpacing: 0.8 },
-	editButton: {
-		alignItems: 'center', borderColor: colors.brandGreen, borderRadius: 8, borderWidth: 1,
-		justifyContent: 'center', minHeight: 36, paddingHorizontal: 16,
-	},
-	editButtonText: { color: colors.brandGreenDark, fontSize: 14, fontWeight: '700' },
+	sectionEyebrow: { color: colors.textMuted, fontSize: 12, fontWeight: '700', letterSpacing: 0.8 },
 	details: { marginTop: 4 },
 	detailRow: {
-		borderBottomColor: colors.inputBorder, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 11,
+		borderBottomColor: colors.inputBorder, borderBottomWidth: StyleSheet.hairlineWidth, paddingVertical: 12,
 	},
 	lastDetailRow: { borderBottomWidth: 0, paddingBottom: 2 },
-	detailLabel: { color: colors.textMuted, fontSize: 12, marginBottom: 4 },
-	detailValue: { color: colors.textPrimary, fontSize: 15 },
-	form: { marginTop: 12 },
-	inputGroup: { marginBottom: 13 },
-	inputLabel: { color: colors.textPrimary, fontSize: 14, fontWeight: '600', marginBottom: 6 },
-	input: {
-		backgroundColor: colors.inputBackground, borderColor: colors.inputBorder, borderRadius: 8, borderWidth: 1,
-		color: colors.textPrimary, fontSize: 14, minHeight: 44, paddingHorizontal: 12, paddingVertical: 10,
+	detailLabel: { color: colors.textMuted, fontSize: 12, marginBottom: 4, fontWeight: '600' },
+	detailValue: { color: colors.textPrimary, fontSize: 15, fontWeight: '500' },
+
+	infoCard: {
+		backgroundColor: '#F7FAFC',
+		borderColor: '#E2E8F0',
+		borderWidth: 1,
+		borderRadius: 14,
+		padding: 18,
 	},
-	formActions: { flexDirection: 'row', gap: 10, marginTop: 6 },
-	cancelButton: {
-		alignItems: 'center', backgroundColor: colors.cardBackground, borderColor: colors.inputBorder,
-		borderRadius: 8, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 46,
+	infoCardTitle: {
+		color: colors.textPrimary,
+		fontSize: 16,
+		fontWeight: '700',
+		marginBottom: 8,
 	},
-	cancelButtonText: { color: colors.textSecondary, fontSize: 14, fontWeight: '700' },
-	saveButton: {
-		alignItems: 'center', backgroundColor: colors.primary, borderBottomColor: colors.primaryDark,
-		borderBottomWidth: 3, borderRadius: 8, flex: 1.4, justifyContent: 'center', minHeight: 46, paddingHorizontal: 8,
+	infoCardDescription: {
+		color: colors.textSecondary,
+		fontSize: 13,
+		lineHeight: 20,
 	},
-	saveButtonText: { color: colors.textLight, fontSize: 14, fontWeight: '700' },
-	publicationsHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 2 },
-	publicationsTitle: { color: colors.textPrimary, fontSize: 19, fontWeight: '700' },
-	publicationsCount: { color: colors.textMuted, fontSize: 13, marginTop: 3 },
+	cadastrarOngBtn: {
+		backgroundColor: colors.brandGreen,
+		borderRadius: 8,
+		paddingVertical: 13,
+		alignItems: 'center',
+		marginTop: 14,
+		borderBottomWidth: 3,
+		borderBottomColor: colors.brandGreenDark,
+	},
+	cadastrarOngBtnText: {
+		color: colors.textLight,
+		fontSize: 14,
+		fontWeight: '700',
+	},
+
+	publicationsHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 4 },
+	publicationsTitle: { color: colors.textPrimary, fontSize: 18, fontWeight: '700' },
+	publicationsCount: { color: colors.textMuted, fontSize: 13 },
 	postList: { gap: 12 },
 	postCard: {
 		backgroundColor: colors.cardBackground, borderRadius: 15, elevation: 3, padding: 16,
@@ -344,14 +414,57 @@ const styles = StyleSheet.create({
 		justifyContent: 'space-between', marginTop: 14, paddingTop: 12,
 	},
 	postStat: { color: colors.textMuted, fontSize: 12 },
-	emptyState: { alignItems: 'center', backgroundColor: colors.cardBackground, borderRadius: 15, padding: 30 },
+	emptyState: { alignItems: 'center', backgroundColor: colors.cardBackground, borderRadius: 15, padding: 26 },
 	emptyIcon: {
-		alignItems: 'center', backgroundColor: colors.greenHighlight, borderRadius: 25,
+		alignItems: 'center', backgroundColor: '#E8F5E9', borderRadius: 25,
 		height: 50, justifyContent: 'center', width: 50,
 	},
-	emptyIconText: { color: colors.brandGreenDark, fontSize: 28, fontWeight: '400' },
-	emptyTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: '700', marginTop: 14, textAlign: 'center' },
+	emptyIconText: { fontSize: 24 },
+	emptyTitle: { color: colors.textPrimary, fontSize: 16, fontWeight: '700', marginTop: 12, textAlign: 'center' },
 	emptyDescription: {
 		color: colors.textMuted, fontSize: 13, lineHeight: 19, marginTop: 6, maxWidth: 360, textAlign: 'center',
+	},
+
+	logoutButton: {
+		backgroundColor: '#FFF5F5',
+		borderColor: '#FED7D7',
+		borderWidth: 1,
+		borderRadius: 10,
+		paddingVertical: 14,
+		alignItems: 'center',
+		marginTop: 8,
+	},
+	logoutButtonText: {
+		color: '#C53030',
+		fontSize: 15,
+		fontWeight: '700',
+	},
+
+	loginActionBtn: {
+		backgroundColor: colors.primary,
+		paddingVertical: 13,
+		borderRadius: 8,
+		width: '100%',
+		alignItems: 'center',
+		marginTop: 18,
+	},
+	loginActionText: {
+		color: colors.textLight,
+		fontSize: 15,
+		fontWeight: '700',
+	},
+	registerActionBtn: {
+		borderColor: colors.brandGreen,
+		borderWidth: 1.5,
+		paddingVertical: 12,
+		borderRadius: 8,
+		width: '100%',
+		alignItems: 'center',
+		marginTop: 10,
+	},
+	registerActionText: {
+		color: colors.brandGreenDark,
+		fontSize: 15,
+		fontWeight: '700',
 	},
 });
