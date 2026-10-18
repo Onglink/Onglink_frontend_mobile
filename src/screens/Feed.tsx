@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
+	ActivityIndicator,
 	Alert,
 	Image,
 	KeyboardAvoidingView,
@@ -10,6 +11,7 @@ import {
 	StyleSheet,
 	Text,
 	TextInput,
+	TouchableOpacity,
 	View,
 	useWindowDimensions,
 	RefreshControl,
@@ -19,96 +21,56 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ProfilePost, RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
 import publicacaoService from '../services/publicacaoService';
+import { getUsuarioLogado } from '../services/usuarioService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Feed'>;
 
 type FeedPost = ProfilePost;
 
-const DEMO_POSTS: FeedPost[] = [
-	{
-		id: 'post-1',
-		author: 'Instituto Sementes',
-		description: 'Organização social',
-		initials: 'IS',
-		category: 'Ação',
-		location: 'Votorantim, SP',
-		time: 'Há 2 horas',
-		title: 'Mutirão de horta comunitária',
-		body: 'Neste sábado vamos preparar os canteiros do bairro. Toda ajuda e muda de tempero é bem-vinda.',
-		imageUri: null,
-		likes: 24,
-		comments: 6,
-		isLiked: false,
-	},
-	{
-		id: 'post-2',
-		author: 'Coletivo Patas Unidas',
-		description: 'Proteção animal',
-		initials: 'PU',
-		category: 'Pedido',
-		location: 'Sorocaba, SP',
-		time: 'Há 5 horas',
-		title: 'Precisamos de cobertores',
-		body: 'Estamos recebendo animais resgatados esta semana e precisamos de cobertores limpos para acolhimento.',
-		imageUri: null,
-		likes: 18,
-		comments: 4,
-		isLiked: false,
-	},
-	{
-		id: 'post-3',
-		author: 'Mariana Costa',
-		description: 'Voluntária',
-		initials: 'MC',
-		category: 'Ação',
-		location: 'Votorantim, SP',
-		time: 'Ontem',
-		title: 'Oficina de leitura para crianças',
-		body: 'Foi uma tarde cheia de histórias na biblioteca do bairro. Obrigada a todas as pessoas voluntárias!',
-		imageUri: null,
-		likes: 31,
-		comments: 8,
-		isLiked: false,
-	},
-];
-
-export default function Feed({ navigation }: Props) {
+export default function Feed({ navigation, route }: Props) {
 	const { width } = useWindowDimensions();
 	const isTablet = width > 600;
-	const [posts, setPosts] = useState<FeedPost[]>(DEMO_POSTS);
+	const usuario = route.params?.usuario || getUsuarioLogado();
+	const isOngOrAdmin = usuario?.status === 'ong' || usuario?.status === 'admin';
+	const [posts, setPosts] = useState<FeedPost[]>([]);
+	const [loading, setLoading] = useState(true);
+	const [isPublishing, setIsPublishing] = useState(false);
 	const [draft, setDraft] = useState('');
 	const [selectedImage, setSelectedImage] = useState<string | null>(null);
 	const [isComposerVisible, setIsComposerVisible] = useState(false);
 	const [refreshing, setRefreshing] = useState(false);
 	const canPublish = draft.trim().length > 0 || selectedImage !== null;
+	const scrollViewRef = useRef<ScrollView>(null);
 
-	// Carrega as publicações reais do backend
+	// Carrega as publicações reais do backend da nuvem
 	const loadPosts = useCallback(async () => {
 		try {
 			const data = await publicacaoService.listarPublicacoes();
-			if (Array.isArray(data) && data.length > 0) {
-				const mapped: FeedPost[] = data.map((item) => ({
-					id: item._id,
-					author: item.criadoPor?.assignedTo?.nomeFantasia || item.criadoPor?.nome || 'ONG Parceira',
-					description: item.criadoPor?.assignedTo ? 'ONG Verificada' : 'Membro Onglink',
-					initials: (item.criadoPor?.assignedTo?.nomeFantasia || item.criadoPor?.nome || 'ON')
-						.substring(0, 2)
-						.toUpperCase(),
-					category: 'Ação',
-					location: 'Comunidade Onglink',
-					time: item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-BR') : 'Recente',
-					title: item.titulo || 'Publicação',
-					body: item.descricao || '',
-					imageUri: item.imagem && item.imagem.length > 0 ? item.imagem[0] : null,
-					likes: 12,
-					comments: 3,
-					isLiked: false,
-				}));
+			if (Array.isArray(data)) {
+				const mapped: FeedPost[] = data.map((item) => {
+					const authorName = item.criadoPor?.assignedTo?.nomeFantasia || item.criadoPor?.nome || 'ONG Parceira';
+					return {
+						id: item._id,
+						author: authorName,
+						description: item.criadoPor?.assignedTo ? 'ONG Verificada' : 'Membro Onglink',
+						initials: (authorName || 'ON').substring(0, 2).toUpperCase(),
+						category: 'Ação',
+						location: 'Comunidade Onglink',
+						time: item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-BR') : 'Recente',
+						title: item.titulo || 'Publicação',
+						body: item.descricao || '',
+						imageUri: item.imagem && item.imagem.length > 0 ? item.imagem[0] : null,
+						likes: 0,
+						comments: 0,
+						isLiked: false,
+					};
+				});
 				setPosts(mapped);
 			}
-		} catch {
-			// Se o backend estiver vazio ou inacessível no momento, mantém os posts de demonstração
-			console.log('Backend offline ou sem dados, exibindo dados de exemplo.');
+		} catch (error) {
+			console.log('Erro ao carregar publicações da nuvem:', error);
+		} finally {
+			setLoading(false);
 		}
 	}, []);
 
@@ -162,35 +124,102 @@ export default function Feed({ navigation }: Props) {
 		)));
 	};
 
-	const publishPost = () => {
+	const handleHomePress = () => {
+		if (!usuario) {
+			// Modo visitante: volta para a tela inicial Home da aplicação
+			navigation.navigate('Home');
+		} else {
+			// Modo logado: rola para o início da tela e atualiza as postagens
+			scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+			loadPosts();
+		}
+	};
+
+	const handleOpenComposer = () => {
+		if (!usuario) {
+			Alert.alert(
+				'Login Necessário',
+				'Você precisa estar conectado em uma conta de ONG para fazer publicações.',
+				[
+					{ text: 'Cancelar', style: 'cancel' },
+					{ text: 'Fazer Login', onPress: () => navigation.navigate('Login') },
+				]
+			);
+			return;
+		}
+
+		if (usuario.status === 'user') {
+			Alert.alert(
+				'Apenas ONGs Podem Publicar',
+				'Seu usuário atual possui o perfil "Voluntário/Comum". Para publicar no Feed, é necessário cadastrar sua ONG e aguardar a aprovação da administração.',
+				[
+					{ text: 'Entendi', style: 'cancel' },
+					{
+						text: 'Cadastrar ONG',
+						onPress: () => navigation.navigate('CadastroCompleto'),
+					},
+				]
+			);
+			return;
+		}
+
+		setIsComposerVisible(true);
+	};
+
+	const publishPost = async () => {
+		if (!isOngOrAdmin) {
+			Alert.alert(
+				'Permissão Negada',
+				'Apenas contas com status de ONG aprovada ou Administrador podem publicar.'
+			);
+			setIsComposerVisible(false);
+			return;
+		}
+
 		const body = draft.trim();
 		if (!canPublish) return;
 
-		const newPost: FeedPost = {
-			id: `post-${Date.now()}`,
-			author: 'Você',
-			description: 'Comunidade',
-			initials: 'VC',
-			category: 'Ação',
-			location: 'Onglink',
-			time: 'Agora',
-			title: 'Nova publicação',
-			body: body || 'Imagem compartilhada',
-			imageUri: selectedImage,
-			likes: 0,
-			comments: 0,
-			isLiked: false,
-		};
+		try {
+			setIsPublishing(true);
 
-		setPosts((currentPosts) => [newPost, ...currentPosts]);
-		setDraft('');
-		setSelectedImage(null);
-		setIsComposerVisible(false);
+			if (usuario?._id) {
+				const formData = new FormData();
+				formData.append('titulo', 'Publicação');
+				formData.append('descricao', body || 'Imagem compartilhada');
+				formData.append('criadoPor', usuario._id);
+
+				if (selectedImage) {
+					const filename = selectedImage.split('/').pop() || 'foto.jpg';
+					const match = /\.(\w+)$/.exec(filename);
+					const type = match ? `image/${match[1]}` : 'image/jpeg';
+					// @ts-ignore
+					formData.append('image', {
+						uri: selectedImage,
+						name: filename,
+						type,
+					});
+				}
+
+				await publicacaoService.criarPublicacao(formData);
+			}
+
+			// Recarrega as publicações diretamente da nuvem
+			await loadPosts();
+			setDraft('');
+			setSelectedImage(null);
+			setIsComposerVisible(false);
+		} catch (error: any) {
+			console.error('Erro ao publicar:', error);
+			Alert.alert('Erro ao publicar', error.message || 'Não foi possível enviar a publicação para o servidor.');
+		} finally {
+			setIsPublishing(false);
+		}
 	};
 
 	return (
 		<View style={styles.screen}>
 			<ScrollView
+				ref={scrollViewRef}
 				style={styles.container}
 				contentContainerStyle={styles.scrollContent}
 				keyboardShouldPersistTaps="handled"
@@ -204,55 +233,144 @@ export default function Feed({ navigation }: Props) {
 				}
 			>
 				<View style={[styles.content, isTablet && styles.tabletContent]}>
-					<View style={styles.postList}>
-						{posts.map((post) => (
-							<View key={post.id} style={styles.postCard}>
-								<View style={styles.postHeader}>
-									<View style={styles.avatar}>
-										<Text style={styles.avatarText}>{post.initials}</Text>
-									</View>
-									<View style={styles.authorInfo}>
-										<Text style={styles.authorName}>{post.author}</Text>
-										<Text style={styles.postMeta}>{post.description} · {post.time}</Text>
-									</View>
-									<View style={[styles.categoryTag, post.category === 'Pedido' && styles.requestTag]}>
-										<Text style={styles.categoryText}>{post.category}</Text>
-									</View>
+					{/* Banner Informativo / Boas-vindas */}
+					{usuario ? (
+						<View style={styles.userGreetingCard}>
+							<View style={styles.userGreetingLeft}>
+								<View style={[styles.userAvatar, !isOngOrAdmin && { backgroundColor: colors.brandGreen }]}>
+									<Text style={styles.userAvatarText}>
+										{(usuario.nome || 'ON').substring(0, 2).toUpperCase()}
+									</Text>
 								</View>
-
-								<Text style={styles.postTitle}>{post.title}</Text>
-								<Text style={styles.postBody}>{post.body}</Text>
-								{post.imageUri && (
-									<Image source={{ uri: post.imageUri }} style={styles.postImage} />
-								)}
-								<Text style={styles.location}>{post.location}</Text>
-
-								<View style={styles.postActions}>
-									<Pressable
-										accessibilityRole="button"
-										accessibilityLabel={`${post.isLiked ? 'Remover curtida' : 'Curtir'} publicação de ${post.author}`}
-										accessibilityState={{ selected: post.isLiked }}
-										onPress={() => toggleLike(post.id)}
-										style={styles.likeButton}
-									>
-										<Text style={[styles.likeText, post.isLiked && styles.likedText]}>
-											{post.isLiked ? 'Curtido' : 'Curtir'} · {post.likes + Number(post.isLiked)}
-										</Text>
-									</Pressable>
-									<Text style={styles.commentsText}>
-										{post.comments} {post.comments === 1 ? 'comentário' : 'comentários'}
+								<View style={styles.userGreetingTextContainer}>
+									<Text style={styles.userGreetingTitle}>
+										Olá, {usuario.nome.split(' ')[0]}! 👋
+									</Text>
+									<Text style={styles.userGreetingSub}>
+										{isOngOrAdmin
+											? '🏢 ONG Verificada · Permissão para publicar'
+											: '🤝 Usuário Comum · Complete o cadastro de ONG para postar'}
 									</Text>
 								</View>
 							</View>
-						))}
-					</View>
+							{isOngOrAdmin ? (
+								<TouchableOpacity
+									style={styles.newPostQuickButton}
+									activeOpacity={0.8}
+									onPress={handleOpenComposer}
+								>
+									<Text style={styles.newPostQuickText}>+ Postar</Text>
+								</TouchableOpacity>
+							) : (
+								<TouchableOpacity
+									style={[styles.newPostQuickButton, { backgroundColor: colors.primary }]}
+									activeOpacity={0.8}
+									onPress={() => navigation.navigate('CadastroCompleto')}
+								>
+									<Text style={styles.newPostQuickText}>Virar ONG</Text>
+								</TouchableOpacity>
+							)}
+						</View>
+					) : (
+						<View style={styles.visitorCard}>
+							<View style={styles.visitorTextContainer}>
+								<Text style={styles.visitorTitle}>Modo Visitante 👁️</Text>
+								<Text style={styles.visitorSub}>
+									Conecte-se para interagir ou retorne à tela inicial.
+								</Text>
+							</View>
+							<View style={styles.visitorButtonsRow}>
+								<TouchableOpacity
+									style={styles.visitorHomeButton}
+									activeOpacity={0.8}
+									onPress={() => navigation.navigate('Home')}
+								>
+									<Text style={styles.visitorHomeButtonText}>← Início</Text>
+								</TouchableOpacity>
+								<TouchableOpacity
+									style={styles.visitorLoginButton}
+									activeOpacity={0.8}
+									onPress={() => navigation.navigate('Login')}
+								>
+									<Text style={styles.visitorLoginButtonText}>Entrar</Text>
+								</TouchableOpacity>
+							</View>
+						</View>
+					)}
+
+					{loading ? (
+						<View style={styles.loadingContainer}>
+							<ActivityIndicator size="large" color={colors.brandGreenDark} />
+							<Text style={styles.loadingText}>Carregando publicações da comunidade...</Text>
+						</View>
+					) : posts.length === 0 ? (
+						<View style={styles.emptyContainer}>
+							<Text style={styles.emptyIcon}>📢</Text>
+							<Text style={styles.emptyTitle}>Nenhuma publicação encontrada</Text>
+							<Text style={styles.emptySub}>
+								Ainda não há postagens no feed em nuvem. Puxe a tela para baixo para atualizar!
+							</Text>
+							{isOngOrAdmin && (
+								<TouchableOpacity
+									style={styles.emptyButton}
+									activeOpacity={0.8}
+									onPress={handleOpenComposer}
+								>
+									<Text style={styles.emptyButtonText}>+ Criar primeira publicação</Text>
+								</TouchableOpacity>
+							)}
+						</View>
+					) : (
+						<View style={styles.postList}>
+							{posts.map((post) => (
+								<View key={post.id} style={styles.postCard}>
+									<View style={styles.postHeader}>
+										<View style={styles.avatar}>
+											<Text style={styles.avatarText}>{post.initials}</Text>
+										</View>
+										<View style={styles.authorInfo}>
+											<Text style={styles.authorName}>{post.author}</Text>
+											<Text style={styles.postMeta}>{post.description} · {post.time}</Text>
+										</View>
+										<View style={[styles.categoryTag, post.category === 'Pedido' && styles.requestTag]}>
+											<Text style={styles.categoryText}>{post.category}</Text>
+										</View>
+									</View>
+
+									<Text style={styles.postTitle}>{post.title}</Text>
+									<Text style={styles.postBody}>{post.body}</Text>
+									{post.imageUri && (
+										<Image source={{ uri: post.imageUri }} style={styles.postImage} />
+									)}
+									<Text style={styles.location}>{post.location}</Text>
+
+									<View style={styles.postActions}>
+										<Pressable
+											accessibilityRole="button"
+											accessibilityLabel={`${post.isLiked ? 'Remover curtida' : 'Curtir'} publicação de ${post.author}`}
+											accessibilityState={{ selected: post.isLiked }}
+											onPress={() => toggleLike(post.id)}
+											style={styles.likeButton}
+										>
+											<Text style={[styles.likeText, post.isLiked && styles.likedText]}>
+												{post.isLiked ? 'Curtido' : 'Curtir'} · {post.likes + Number(post.isLiked)}
+											</Text>
+										</Pressable>
+										<Text style={styles.commentsText}>
+											{post.comments} {post.comments === 1 ? 'comentário' : 'comentários'}
+										</Text>
+									</View>
+								</View>
+							))}
+						</View>
+					)}
 				</View>
 			</ScrollView>
 			<View style={styles.bottomNavigation}>
 				<Pressable
 					accessibilityRole="button"
-					accessibilityLabel="Início"
-					onPress={() => navigation.navigate('Feed')}
+					accessibilityLabel={usuario ? "Início (Atualizar Feed)" : "Voltar para o Início"}
+					onPress={handleHomePress}
 					style={styles.navigationButton}
 				>
 					<NavigationIcon name="home" color={colors.brandGreenDark} />
@@ -260,7 +378,7 @@ export default function Feed({ navigation }: Props) {
 				<Pressable
 					accessibilityRole="button"
 					accessibilityLabel="Criar nova publicação"
-					onPress={() => setIsComposerVisible(true)}
+					onPress={handleOpenComposer}
 					style={styles.createNavigationButton}
 				>
 					<View style={styles.createIconCircle}>
@@ -271,7 +389,8 @@ export default function Feed({ navigation }: Props) {
 					accessibilityRole="button"
 					accessibilityLabel="Perfil"
 					onPress={() => navigation.navigate('Perfil', {
-						posts: posts.filter((post) => post.author === 'Mariana Costa' || post.author === 'Você'),
+						posts: posts.filter((post) => post.author === (usuario?.nome || 'Você')),
+						usuario: usuario ?? undefined,
 					})}
 					style={styles.navigationButton}
 				>
@@ -352,12 +471,16 @@ export default function Feed({ navigation }: Props) {
 							<Text style={styles.characterCount}>{draft.length}/500</Text>
 							<Pressable
 								accessibilityRole="button"
-								accessibilityState={{ disabled: !canPublish }}
-								disabled={!canPublish}
+								accessibilityState={{ disabled: !canPublish || isPublishing }}
+								disabled={!canPublish || isPublishing}
 								onPress={publishPost}
-								style={[styles.publishButton, !canPublish && styles.disabledButton]}
+								style={[styles.publishButton, (!canPublish || isPublishing) && styles.disabledButton]}
 							>
-								<Text style={styles.publishButtonText}>Publicar</Text>
+								{isPublishing ? (
+									<ActivityIndicator size="small" color={colors.textLight} />
+								) : (
+									<Text style={styles.publishButtonText}>Publicar</Text>
+								)}
 							</Pressable>
 						</View>
 					</View>
@@ -726,5 +849,167 @@ const styles = StyleSheet.create({
 		borderTopRightRadius: 9,
 		height: 10,
 		width: 18,
+	},
+	userGreetingCard: {
+		backgroundColor: colors.cardBackground,
+		borderRadius: 12,
+		padding: 14,
+		marginBottom: 16,
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'space-between',
+		shadowColor: '#000',
+		shadowOffset: { width: 0, height: 2 },
+		shadowOpacity: 0.08,
+		shadowRadius: 4,
+		elevation: 3,
+		borderLeftWidth: 4,
+		borderLeftColor: colors.primary,
+	},
+	userGreetingLeft: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		flex: 1,
+		gap: 10,
+	},
+	userAvatar: {
+		width: 42,
+		height: 42,
+		borderRadius: 21,
+		backgroundColor: colors.primary,
+		alignItems: 'center',
+		justifyContent: 'center',
+	},
+	userAvatarText: {
+		color: colors.textLight,
+		fontWeight: 'bold',
+		fontSize: 15,
+	},
+	userGreetingTextContainer: {
+		flex: 1,
+	},
+	userGreetingTitle: {
+		fontSize: 16,
+		fontWeight: 'bold',
+		color: colors.textPrimary,
+	},
+	userGreetingSub: {
+		fontSize: 12,
+		color: colors.textSecondary,
+		marginTop: 2,
+	},
+	newPostQuickButton: {
+		backgroundColor: colors.brandGreen,
+		paddingHorizontal: 14,
+		paddingVertical: 8,
+		borderRadius: 20,
+	},
+	newPostQuickText: {
+		color: colors.textLight,
+		fontSize: 13,
+		fontWeight: 'bold',
+	},
+	visitorCard: {
+		backgroundColor: '#FFFBEA',
+		borderColor: '#FFE082',
+		borderWidth: 1,
+		borderRadius: 12,
+		padding: 14,
+		marginBottom: 16,
+		flexDirection: 'row',
+		alignItems: 'center',
+		justifyContent: 'space-between',
+	},
+	visitorTextContainer: {
+		flex: 1,
+		marginRight: 10,
+	},
+	visitorTitle: {
+		fontSize: 14,
+		fontWeight: 'bold',
+		color: '#8D6E63',
+	},
+	visitorSub: {
+		fontSize: 12,
+		color: '#A1887F',
+		marginTop: 2,
+	},
+	visitorLoginButton: {
+		backgroundColor: colors.primary,
+		paddingHorizontal: 14,
+		paddingVertical: 8,
+		borderRadius: 8,
+	},
+	visitorLoginButtonText: {
+		color: colors.textLight,
+		fontSize: 13,
+		fontWeight: 'bold',
+	},
+	visitorButtonsRow: {
+		flexDirection: 'row',
+		alignItems: 'center',
+		gap: 8,
+	},
+	visitorHomeButton: {
+		backgroundColor: colors.cardBackground,
+		borderWidth: 1,
+		borderColor: '#D7CCC8',
+		paddingHorizontal: 10,
+		paddingVertical: 8,
+		borderRadius: 8,
+	},
+	visitorHomeButtonText: {
+		color: '#5D4037',
+		fontSize: 13,
+		fontWeight: '600',
+	},
+	loadingContainer: {
+		alignItems: 'center',
+		justifyContent: 'center',
+		paddingVertical: 40,
+	},
+	loadingText: {
+		marginTop: 12,
+		color: colors.textSecondary,
+		fontSize: 14,
+	},
+	emptyContainer: {
+		backgroundColor: colors.cardBackground,
+		borderRadius: 16,
+		padding: 24,
+		alignItems: 'center',
+		justifyContent: 'center',
+		borderWidth: 1,
+		borderColor: '#E0E0E0',
+		marginVertical: 10,
+	},
+	emptyIcon: {
+		fontSize: 40,
+		marginBottom: 10,
+	},
+	emptyTitle: {
+		fontSize: 16,
+		fontWeight: 'bold',
+		color: colors.textPrimary,
+		marginBottom: 6,
+		textAlign: 'center',
+	},
+	emptySub: {
+		fontSize: 13,
+		color: colors.textSecondary,
+		textAlign: 'center',
+		lineHeight: 18,
+		marginBottom: 16,
+	},
+	emptyButton: {
+		backgroundColor: colors.brandGreen,
+		paddingHorizontal: 16,
+		paddingVertical: 10,
+		borderRadius: 20,
+	},
+	emptyButtonText: {
+		color: colors.textLight,
+		fontSize: 13,
+		fontWeight: 'bold',
 	},
 });

@@ -30,6 +30,14 @@ export interface LoginResponse {
   usuario: UsuarioResponse;
 }
 
+let usuarioLogado: UsuarioResponse | null = null;
+
+export const setUsuarioLogado = (user: UsuarioResponse | null) => {
+  usuarioLogado = user;
+};
+
+export const getUsuarioLogado = () => usuarioLogado;
+
 export const usuarioService = {
   cadastrarUsuario: async (dados: CadastroUsuarioPayload) => {
     return await api.post<{ message: string; id: string }>('/usuarios/cadastro', dados);
@@ -40,11 +48,24 @@ export const usuarioService = {
     if (response?.token) {
       setAuthToken(response.token);
     }
+    if (response?.usuario) {
+      setUsuarioLogado(response.usuario);
+    }
     return response;
   },
 
+  logout: () => {
+    setAuthToken(null);
+    setUsuarioLogado(null);
+  },
+
   buscarPorId: async (id: string) => {
-    return await api.get<UsuarioResponse>(`/usuarios/${id}`);
+    const res = await api.get<any>(`/usuarios/${id}`);
+    const user = res?.usuario || res;
+    if (user && user._id) {
+      setUsuarioLogado(user);
+    }
+    return user as UsuarioResponse;
   },
 
   listarUsuarios: async () => {

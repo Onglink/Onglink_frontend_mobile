@@ -195,10 +195,10 @@ export default function Cadastro({ navigation }: Props) {
           <TouchableOpacity
             style={styles.linkOng}
             activeOpacity={0.7}
-            onPress={() => navigation.navigate('CadastroCompleto')}
+            onPress={() => navigation.navigate('Login')}
           >
             <Text style={styles.linkOngText}>
-              Representa uma instituição? <Text style={styles.linkOngTextBold}>Cadastre sua ONG aqui</Text>
+              Já tem uma conta? <Text style={styles.linkOngTextBold}>Fazer login</Text>
             </Text>
           </TouchableOpacity>
         </View>
