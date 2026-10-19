@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -25,10 +25,27 @@ export default function Login({ navigation }: Props) {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Estados para o Lockout Progressivo
+  const [tentativas, setTentativas] = useState(0);
+  const [lockoutTimer, setLockoutTimer] = useState(0); // Tempo restante em segundos
+
   const { width } = useWindowDimensions();
   const isTablet = width > 600;
 
+  // Efeito para rodar o cronômetro regressivo quando houver lockout
+  useEffect(() => {
+    let interval: ReturnType<typeof setTimeout>;
+    if (lockoutTimer > 0) {
+      interval = setInterval(() => {
+        setLockoutTimer((prev) => (prev > 0 ? prev - 1 : 0));
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [lockoutTimer]);
+
   const handleLogin = async () => {
+    if (lockoutTimer > 0) return; // Segurança extra caso o botão seja clicado
+
     const emailLimpo = email.trim();
     if (!emailLimpo || !senha) {
       Alert.alert('Campos obrigatórios', 'Por favor, informe seu e-mail e senha.');
@@ -49,22 +66,60 @@ export default function Login({ navigation }: Props) {
         senha,
       });
 
+      // Sucesso: reseta as tentativas e o lockout
+      setTentativas(0);
+      setLockoutTimer(0);
+
       const usuario = response.usuario;
-      // Reseta a navegação tornando o Feed a tela raiz, sem botão de voltar para o Login
       navigation.reset({
         index: 0,
         routes: [{ name: 'Feed', params: { usuario } }],
       });
     } catch (error: any) {
       console.error('Erro no login mobile:', error);
-      const mensagemErro =
-        error.message ||
-        'Falha ao autenticar. Verifique seu e-mail, senha e conexão com o servidor.';
-      Alert.alert('Erro ao entrar', mensagemErro);
+
+      // Incrementa as tentativas locais (o ideal é que o back-end retorne se está bloqueado e por quanto tempo)
+      const novasTentativas = tentativas + 1;
+      setTentativas(novasTentativas);
+
+      // Lógica de cálculo do tempo de bloqueio progressivo (em segundos)
+      let tempoDeBloqueio = 0;
+      if (novasTentativas >= 6) {
+        tempoDeBloqueio = 300; // 5 minutos
+      } else if (novasTentativas === 5) {
+        tempoDeBloqueio = 60;  // 1 minuto
+      } else if (novasTentativas === 4) {
+        tempoDeBloqueio = 30;  // 30 segundos
+      }
+
+      if (tempoDeBloqueio > 0) {
+        setLockoutTimer(tempoDeBloqueio);
+        Alert.alert(
+          'Login temporariamente bloqueado',
+          `Muitas tentativas incorretas. Aguarde ${tempoDeBloqueio} segundos para tentar novamente.`
+        );
+      } else {
+        const mensagemErro =
+          error.message ||
+          'Falha ao autenticar. Verifique seu e-mail, senha e conexão com o servidor.';
+        Alert.alert('Erro ao entrar', `${mensagemErro} (Tentativa ${novasTentativas}/4)`);
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  // Formata os segundos restantes para o formato MM:SS
+  const formatarTempo = (segundos: number) => {
+    const mins = Math.floor(segundos / 60);
+    const secs = segundos % 60;
+    if (mins > 0) {
+      return `${mins}m ${secs < 10 ? '0' : ''}${secs}s`;
+    }
+    return `${secs}s`;
+  };
+
+  const estaBloqueado = lockoutTimer > 0;
 
   return (
     <KeyboardAvoidingView
@@ -87,11 +142,21 @@ export default function Login({ navigation }: Props) {
             </Text>
           </View>
 
+          {/* Aviso visual de Bloqueio Progressivo */}
+          {estaBloqueado && (
+            <View style={styles.lockoutBox}>
+              <Text style={styles.lockoutText}>
+                ⚠️ Acesso temporariamente restrito devido a excesso de tentativas. Tente novamente em{' '}
+                <Text style={styles.lockoutTimerBold}>{formatarTempo(lockoutTimer)}</Text>.
+              </Text>
+            </View>
+          )}
+
           {/* Campo E-mail */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>E-mail</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, estaBloqueado && styles.inputDisabled]}
               placeholder="seu@email.com"
               placeholderTextColor={colors.textMuted}
               keyboardType="email-address"
@@ -99,6 +164,7 @@ export default function Login({ navigation }: Props) {
               autoCorrect={false}
               value={email}
               onChangeText={setEmail}
+              editable={!estaBloqueado}
             />
           </View>
 
@@ -109,34 +175,41 @@ export default function Login({ navigation }: Props) {
               <TouchableOpacity
                 onPress={() => setShowPassword((prev) => !prev)}
                 activeOpacity={0.7}
+                disabled={estaBloqueado}
               >
-                <Text style={styles.togglePasswordText}>
+                <Text style={[styles.togglePasswordText, estaBloqueado && { opacity: 0.5 }]}>
                   {showPassword ? 'Ocultar' : 'Mostrar'}
                 </Text>
               </TouchableOpacity>
             </View>
             <TextInput
-              style={styles.input}
+              style={[styles.input, estaBloqueado && styles.inputDisabled]}
               placeholder="Sua senha de acesso"
               placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               value={senha}
               onChangeText={setSenha}
+              editable={!estaBloqueado}
             />
           </View>
 
           {/* Botão Entrar */}
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[
+              styles.button,
+              (loading || estaBloqueado) && styles.buttonDisabled,
+            ]}
             activeOpacity={0.85}
             onPress={handleLogin}
-            disabled={loading}
+            disabled={loading || estaBloqueado}
           >
             {loading ? (
               <ActivityIndicator color={colors.textLight} />
             ) : (
-              <Text style={styles.buttonText}>Entrar</Text>
+              <Text style={styles.buttonText}>
+                {estaBloqueado ? `Aguarde ${formatarTempo(lockoutTimer)}` : 'Entrar'}
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -210,6 +283,23 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 20,
   },
+  lockoutBox: {
+    backgroundColor: '#FFF3CD',
+    borderColor: '#FFEEBA',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  lockoutText: {
+    color: '#856404',
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  lockoutTimerBold: {
+    fontWeight: 'bold',
+  },
   inputGroup: {
     marginBottom: 16,
   },
@@ -240,6 +330,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: colors.textPrimary,
   },
+  inputDisabled: {
+    backgroundColor: '#E9ECEF',
+    color: '#6C757D',
+  },
   button: {
     backgroundColor: colors.primary,
     paddingVertical: 15,
@@ -251,6 +345,8 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.7,
+    backgroundColor: '#6C757D',
+    borderBottomColor: '#495057',
   },
   buttonText: {
     color: colors.textLight,
@@ -283,19 +379,6 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     color: colors.brandGreenDark,
     fontSize: 15,
-    fontWeight: 'bold',
-  },
-  ongLinkButton: {
-    marginTop: 18,
-    alignItems: 'center',
-  },
-  ongLinkText: {
-    fontSize: 13,
-    color: colors.textSecondary,
-    textAlign: 'center',
-  },
-  ongLinkTextBold: {
-    color: colors.brandGreenDark,
     fontWeight: 'bold',
   },
 });
