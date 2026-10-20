@@ -33,8 +33,8 @@ export const getBaseUrl = (): string => {
 
 export const API_URL = getBaseUrl();
 
-// Chave da API configurada no .env do backend (cabeçalho x-api-key)
-export let API_KEY = 'fcf87fe4-7793-477d-b765-620c5cdbcf4f';
+// Chave da API configurada no .env (cabeçalho x-api-key)
+export let API_KEY = process.env.EXPO_PUBLIC_API_KEY || 'fcf87fe4-7793-477d-b765-620c5cdbcf4f';
 
 // Armazenamento em memória do token JWT de autenticação
 let authToken: string | null = null;

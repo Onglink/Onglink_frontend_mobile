@@ -15,6 +15,7 @@ export interface PublicacaoResponse {
   _id: string;
   titulo: string;
   descricao: string;
+  categoria?: 'Ação' | 'Pedido' | string;
   imagem: string[];
   criadoPor: PublicacaoCriador;
   createdAt: string;
@@ -24,6 +25,7 @@ export interface PublicacaoResponse {
 export interface CriarPublicacaoPayload {
   titulo: string;
   descricao: string;
+  categoria?: string;
   criadoPor: string;
   imagem?: string;
 }

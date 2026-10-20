@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
-const CLOUD_NAME = 'df48qk6bj';
-const UPLOAD_PRESET = 'onglinkCloud';
+const CLOUD_NAME = process.env.EXPO_PUBLIC_CLOUDINARY_CLOUD_NAME || 'df48qk6bj';
+const UPLOAD_PRESET = process.env.EXPO_PUBLIC_CLOUDINARY_UPLOAD_PRESET || 'onglinkCloud';
 
 export interface UploadFileParam {
   uri: string;
