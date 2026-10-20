@@ -12,6 +12,7 @@ import {
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // <--- Importado
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
@@ -19,32 +20,72 @@ import usuarioService from '../services/usuarioService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
+// Chave base para o AsyncStorage
+const LOCKOUT_STORAGE_KEY = '@Onglink_Lockout_';
+
 export default function Login({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // Estados para o Lockout Progressivo
   const [tentativas, setTentativas] = useState(0);
-  const [lockoutTimer, setLockoutTimer] = useState(0); // Tempo restante em segundos
+  const [lockoutTimer, setLockoutTimer] = useState(0);
 
   const { width } = useWindowDimensions();
   const isTablet = width > 600;
 
-  // Efeito para rodar o cronômetro regressivo quando houver lockout
+  // Função para verificar se há bloqueio ativo ao digitar o e-mail ou carregar a tela
+  const verificarBloqueioExistente = async (emailConsultar: string) => {
+    if (!emailConsultar) return;
+    try {
+      const emailChave = emailConsultar.trim().toLowerCase();
+      const dadosSalvos = await AsyncStorage.getItem(LOCKOUT_STORAGE_KEY + emailChave);
+      
+      if (dadosSalvos) {
+        const { lockoutUntil, tentativasSalvas } = JSON.parse(dadosSalvos);
+        const agora = Date.now();
+        
+        if (lockoutUntil > agora) {
+          // Ainda está bloqueado, calcula quantos segundos faltam
+          const segundosRestantes = Math.ceil((lockoutUntil - agora) / 1000);
+          setLockoutTimer(segundosRestantes);
+          setTentativas(tentativasSalvas);
+        } else {
+          // O bloqueio já expirou, limpa os dados
+          await AsyncStorage.removeItem(LOCKOUT_STORAGE_KEY + emailChave);
+          setLockoutTimer(0);
+        }
+      } else {
+        setLockoutTimer(0);
+      }
+    } catch (error) {
+      console.error('Erro ao verificar lockout:', error);
+    }
+  };
+
+  // Efeito para rodar o cronômetro regressivo
   useEffect(() => {
     let interval: ReturnType<typeof setTimeout>;
     if (lockoutTimer > 0) {
       interval = setInterval(() => {
-        setLockoutTimer((prev) => (prev > 0 ? prev - 1 : 0));
+        setLockoutTimer((prev) => {
+          if (prev <= 1) {
+            // Se o tempo acabou, limpa do storage
+            if (email) {
+              AsyncStorage.removeItem(LOCKOUT_STORAGE_KEY + email.trim().toLowerCase());
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
       }, 1000);
     }
     return () => clearInterval(interval);
-  }, [lockoutTimer]);
+  }, [lockoutTimer, email]);
 
   const handleLogin = async () => {
-    if (lockoutTimer > 0) return; // Segurança extra caso o botão seja clicado
+    if (lockoutTimer > 0) return;
 
     const emailLimpo = email.trim();
     if (!emailLimpo || !senha) {
@@ -66,7 +107,8 @@ export default function Login({ navigation }: Props) {
         senha,
       });
 
-      // Sucesso: reseta as tentativas e o lockout
+      // Sucesso: limpa o lockout e tentativas do AsyncStorage para este e-mail
+      await AsyncStorage.removeItem(LOCKOUT_STORAGE_KEY + emailLimpo.toLowerCase());
       setTentativas(0);
       setLockoutTimer(0);
 
@@ -78,38 +120,47 @@ export default function Login({ navigation }: Props) {
     } catch (error: any) {
       console.error('Erro no login mobile:', error);
 
-      // Incrementa as tentativas locais (o ideal é que o back-end retorne se está bloqueado e por quanto tempo)
       const novasTentativas = tentativas + 1;
       setTentativas(novasTentativas);
 
-      // Lógica de cálculo do tempo de bloqueio progressivo (em segundos)
       let tempoDeBloqueio = 0;
-      if (novasTentativas >= 6) {
+      if (novasTentativas >= 7) {
         tempoDeBloqueio = 300; // 5 minutos
-      } else if (novasTentativas === 5) {
+      } else if (novasTentativas === 6) {
         tempoDeBloqueio = 60;  // 1 minuto
-      } else if (novasTentativas === 4) {
+      } else if (novasTentativas === 5) {
         tempoDeBloqueio = 30;  // 30 segundos
       }
 
       if (tempoDeBloqueio > 0) {
+        const lockoutUntil = Date.now() + tempoDeBloqueio * 1000;
+        
+        // Salva de forma persistente no dispositivo
+        try {
+          await AsyncStorage.setItem(
+            LOCKOUT_STORAGE_KEY + emailLimpo.toLowerCase(),
+            JSON.stringify({ lockoutUntil, tentativasSalvas: novasTentativas })
+          );
+        } catch (e) {
+          console.error('Erro ao salvar lockout:', e);
+        }
+
         setLockoutTimer(tempoDeBloqueio);
         Alert.alert(
-          'Login temporariamente bloqueado',
+          'Conta temporariamente bloqueada',
           `Muitas tentativas incorretas. Aguarde ${tempoDeBloqueio} segundos para tentar novamente.`
         );
       } else {
         const mensagemErro =
           error.message ||
           'Falha ao autenticar. Verifique seu e-mail, senha e conexão com o servidor.';
-        Alert.alert('Erro ao entrar', `${mensagemErro} (Tentativa ${novasTentativas}/4)`);
+        Alert.alert('Erro ao entrar', `${mensagemErro} (Tentativa ${novasTentativas}/5)`);
       }
     } finally {
       setLoading(false);
     }
   };
 
-  // Formata os segundos restantes para o formato MM:SS
   const formatarTempo = (segundos: number) => {
     const mins = Math.floor(segundos / 60);
     const secs = segundos % 60;
@@ -163,7 +214,10 @@ export default function Login({ navigation }: Props) {
               autoCapitalize="none"
               autoCorrect={false}
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(text) => {
+                setEmail(text);
+                verificarBloqueioExistente(text); // Verifica se este e-mail possui bloqueio ativo ao digitar
+              }}
               editable={!estaBloqueado}
             />
           </View>
