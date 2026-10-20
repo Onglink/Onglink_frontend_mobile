@@ -35,11 +35,13 @@ export default function Feed({ navigation, route }: Props) {
 	const [posts, setPosts] = useState<FeedPost[]>([]);
 	const [loading, setLoading] = useState(true);
 	const [isPublishing, setIsPublishing] = useState(false);
+	const [title, setTitle] = useState('');
+	const [category, setCategory] = useState<'Ação' | 'Pedido'>('Ação');
 	const [draft, setDraft] = useState('');
 	const [selectedImage, setSelectedImage] = useState<string | null>(null);
 	const [isComposerVisible, setIsComposerVisible] = useState(false);
 	const [refreshing, setRefreshing] = useState(false);
-	const canPublish = draft.trim().length > 0 || selectedImage !== null;
+	const canPublish = title.trim().length > 0 && (draft.trim().length > 0 || selectedImage !== null);
 	const scrollViewRef = useRef<ScrollView>(null);
 
 	// Carrega as publicações reais do backend da nuvem
@@ -49,12 +51,16 @@ export default function Feed({ navigation, route }: Props) {
 			if (Array.isArray(data)) {
 				const mapped: FeedPost[] = data.map((item) => {
 					const authorName = item.criadoPor?.assignedTo?.nomeFantasia || item.criadoPor?.nome || 'ONG Parceira';
+					const itemCategory = (item.categoria === 'Pedido' || item.categoria === 'Ação')
+						? item.categoria
+						: 'Ação';
+
 					return {
 						id: item._id,
 						author: authorName,
 						description: item.criadoPor?.assignedTo ? 'ONG Verificada' : 'Membro Onglink',
 						initials: (authorName || 'ON').substring(0, 2).toUpperCase(),
-						category: 'Ação',
+						category: itemCategory,
 						location: 'Comunidade Onglink',
 						time: item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-BR') : 'Recente',
 						title: item.titulo || 'Publicação',
@@ -166,6 +172,14 @@ export default function Feed({ navigation, route }: Props) {
 		setIsComposerVisible(true);
 	};
 
+	const handleCloseComposer = () => {
+		setIsComposerVisible(false);
+		setTitle('');
+		setDraft('');
+		setSelectedImage(null);
+		setCategory('Ação');
+	};
+
 	const publishPost = async () => {
 		if (!isOngOrAdmin) {
 			Alert.alert(
@@ -176,7 +190,14 @@ export default function Feed({ navigation, route }: Props) {
 			return;
 		}
 
+		const postTitle = title.trim();
 		const body = draft.trim();
+
+		if (!postTitle) {
+			Alert.alert('Título obrigatório', 'Por favor, informe o título da publicação.');
+			return;
+		}
+
 		if (!canPublish) return;
 
 		try {
@@ -184,8 +205,9 @@ export default function Feed({ navigation, route }: Props) {
 
 			if (usuario?._id) {
 				const formData = new FormData();
-				formData.append('titulo', 'Publicação');
+				formData.append('titulo', postTitle);
 				formData.append('descricao', body || 'Imagem compartilhada');
+				formData.append('categoria', category);
 				formData.append('criadoPor', usuario._id);
 
 				if (selectedImage) {
@@ -205,9 +227,7 @@ export default function Feed({ navigation, route }: Props) {
 
 			// Recarrega as publicações diretamente da nuvem
 			await loadPosts();
-			setDraft('');
-			setSelectedImage(null);
-			setIsComposerVisible(false);
+			handleCloseComposer();
 		} catch (error: any) {
 			console.error('Erro ao publicar:', error);
 			Alert.alert('Erro ao publicar', error.message || 'Não foi possível enviar a publicação para o servidor.');
@@ -410,7 +430,7 @@ export default function Feed({ navigation, route }: Props) {
 					<Pressable
 						accessibilityRole="button"
 						accessibilityLabel="Fechar criação de publicação"
-						onPress={() => setIsComposerVisible(false)}
+						onPress={handleCloseComposer}
 						style={styles.modalBackdrop}
 					/>
 					<View style={[styles.composer, isTablet && styles.tabletComposer]}>
@@ -419,12 +439,67 @@ export default function Feed({ navigation, route }: Props) {
 							<Pressable
 								accessibilityRole="button"
 								accessibilityLabel="Fechar"
-								onPress={() => setIsComposerVisible(false)}
+								onPress={handleCloseComposer}
 								style={styles.closeButton}
 							>
 								<Text style={styles.closeButtonText}>×</Text>
 							</Pressable>
 						</View>
+
+						{/* Seletor de Categoria (Ação vs Pedido) */}
+						<View style={styles.categorySelectorContainer}>
+							<Text style={styles.inputLabel}>Categoria da publicação</Text>
+							<View style={styles.categoryButtonsRow}>
+								<TouchableOpacity
+									style={[
+										styles.categoryChoiceButton,
+										category === 'Ação' && styles.categoryChoiceActiveAcao,
+									]}
+									onPress={() => setCategory('Ação')}
+									activeOpacity={0.8}
+								>
+									<Text
+										style={[
+											styles.categoryChoiceText,
+											category === 'Ação' && styles.categoryChoiceTextActiveAcao,
+										]}
+									>
+										🎯 Ação
+									</Text>
+								</TouchableOpacity>
+
+								<TouchableOpacity
+									style={[
+										styles.categoryChoiceButton,
+										category === 'Pedido' && styles.categoryChoiceActivePedido,
+									]}
+									onPress={() => setCategory('Pedido')}
+									activeOpacity={0.8}
+								>
+									<Text
+										style={[
+											styles.categoryChoiceText,
+											category === 'Pedido' && styles.categoryChoiceTextActivePedido,
+										]}
+									>
+										🙏 Pedido
+									</Text>
+								</TouchableOpacity>
+							</View>
+						</View>
+
+						{/* Campo de Título da Publicação */}
+						<TextInput
+							accessibilityLabel="Título da publicação"
+							style={styles.titleInput}
+							value={title}
+							onChangeText={setTitle}
+							placeholder="Título da publicação *"
+							placeholderTextColor={colors.textMuted}
+							maxLength={100}
+						/>
+
+						{/* Campo de Descrição */}
 						<TextInput
 							accessibilityLabel="Escreva uma publicação"
 							style={styles.input}
@@ -578,6 +653,65 @@ const styles = StyleSheet.create({
 		fontSize: 28,
 		lineHeight: 32,
 	},
+	categorySelectorContainer: {
+		marginBottom: 12,
+	},
+	inputLabel: {
+		color: colors.textSecondary,
+		fontSize: 12,
+		fontWeight: '600',
+		marginBottom: 6,
+		textTransform: 'uppercase',
+		letterSpacing: 0.5,
+	},
+	categoryButtonsRow: {
+		flexDirection: 'row',
+		gap: 10,
+	},
+	categoryChoiceButton: {
+		flex: 1,
+		paddingVertical: 9,
+		paddingHorizontal: 12,
+		borderRadius: 8,
+		borderWidth: 1.5,
+		borderColor: '#D0E2E9',
+		backgroundColor: '#F8FAFC',
+		alignItems: 'center',
+		justifyContent: 'center',
+	},
+	categoryChoiceActiveAcao: {
+		borderColor: colors.primary,
+		backgroundColor: '#E0F7FA',
+	},
+	categoryChoiceActivePedido: {
+		borderColor: '#E65100',
+		backgroundColor: '#FFF3E0',
+	},
+	categoryChoiceText: {
+		fontSize: 13,
+		fontWeight: '600',
+		color: colors.textSecondary,
+	},
+	categoryChoiceTextActiveAcao: {
+		color: colors.primaryDark,
+		fontWeight: 'bold',
+	},
+	categoryChoiceTextActivePedido: {
+		color: '#BF360C',
+		fontWeight: 'bold',
+	},
+	titleInput: {
+		backgroundColor: colors.inputBackground,
+		borderColor: colors.inputBorder,
+		borderRadius: 8,
+		borderWidth: 1,
+		color: colors.textPrimary,
+		fontSize: 14,
+		fontWeight: '600',
+		paddingHorizontal: 12,
+		paddingVertical: 10,
+		marginBottom: 10,
+	},
 	input: {
 		backgroundColor: colors.inputBackground,
 		borderColor: colors.inputBorder,
@@ -668,7 +802,7 @@ const styles = StyleSheet.create({
 		paddingVertical: 5,
 	},
 	requestTag: {
-		backgroundColor: colors.brandGreen,
+		backgroundColor: '#E65100',
 	},
 	categoryText: {
 		color: colors.textLight,

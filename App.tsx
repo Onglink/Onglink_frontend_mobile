@@ -143,7 +143,7 @@ export default function App() {
                       fontSize: 13,
                     }}
                   >
-                    {usuario ? `👤 ${usuario.nome.split(' ')[0]}` : ''}
+                    {usuario ? `👤 ${usuario.nome.split(' ')[0]}` : '👤 Visitante'}
                   </Text>
                 </TouchableOpacity>
               ),
