@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useEffect } from 'react';
+import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -46,8 +47,13 @@ import { getUsuarioLogado } from './src/services/usuarioService';
 const Stack = createNativeStackNavigator<RootStackParamList, 'root'>();
 
 export default function App() {
+  useEffect(() => {
+    // Força o encerramento imediato da Splash Screen assim que a Home for montada
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
+
   return (
-    <NavigationContainer>
+    <NavigationContainer onReady={() => { SplashScreen.hideAsync().catch(() => {}); }}>
       <StatusBar style="light" />
       <Stack.Navigator
         id="root"
