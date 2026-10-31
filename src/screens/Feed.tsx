@@ -8,6 +8,7 @@ import {
 	Platform,
 	Pressable,
 	ScrollView,
+	Share,
 	StyleSheet,
 	Text,
 	TextInput,
@@ -21,11 +22,21 @@ import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { ProfilePost, RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
 import publicacaoService from '../services/publicacaoService';
+import denunciaService from '../services/denunciaService';
 import { getUsuarioLogado } from '../services/usuarioService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Feed'>;
 
 type FeedPost = ProfilePost;
+
+const TIPOS_DENUNCIA = [
+	'Conteudo sensível',
+	'Conteúdo sexual',
+	'Conteúdo violento ou repulsivo',
+	'incitação ao ódio',
+	'Desinformação',
+	'Abuso infantil',
+];
 
 export default function Feed({ navigation, route }: Props) {
 	const { width } = useWindowDimensions();
@@ -44,6 +55,13 @@ export default function Feed({ navigation, route }: Props) {
 	const canPublish = title.trim().length > 0 && (draft.trim().length > 0 || selectedImage !== null);
 	const scrollViewRef = useRef<ScrollView>(null);
 
+	// Estados do Modal de Denúncia
+	const [denunciaModalVisible, setDenunciaModalVisible] = useState(false);
+	const [denunciaPostId, setDenunciaPostId] = useState<string | null>(null);
+	const [tipoDenuncia, setTipoDenuncia] = useState<string>(TIPOS_DENUNCIA[0]);
+	const [motivoDenuncia, setMotivoDenuncia] = useState('');
+	const [isEnviandoDenuncia, setIsEnviandoDenuncia] = useState(false);
+
 	// Carrega as publicações reais do backend da nuvem
 	const loadPosts = useCallback(async () => {
 		try {
@@ -55,8 +73,13 @@ export default function Feed({ navigation, route }: Props) {
 						? item.categoria
 						: 'Ação';
 
+					const criadorId = typeof item.criadoPor === 'object' && item.criadoPor !== null
+						? item.criadoPor._id
+						: (typeof item.criadoPor === 'string' ? item.criadoPor : undefined);
+
 					return {
 						id: item._id,
+						criadorId,
 						author: authorName,
 						description: item.criadoPor?.assignedTo ? 'ONG Verificada' : 'Membro Onglink',
 						initials: (authorName || 'ON').substring(0, 2).toUpperCase(),
@@ -66,9 +89,6 @@ export default function Feed({ navigation, route }: Props) {
 						title: item.titulo || 'Publicação',
 						body: item.descricao || '',
 						imageUri: item.imagem && item.imagem.length > 0 ? item.imagem[0] : null,
-						likes: 0,
-						comments: 0,
-						isLiked: false,
 					};
 				});
 				setPosts(mapped);
@@ -124,18 +144,103 @@ export default function Feed({ navigation, route }: Props) {
 		}
 	};
 
-	const toggleLike = (postId: string) => {
-		setPosts((currentPosts) => currentPosts.map((post) => (
-			post.id === postId ? { ...post, isLiked: !post.isLiked } : post
-		)));
+	// Compartilhar Publicação (Nativo)
+	const handleShare = async (post: FeedPost) => {
+		try {
+			const postUrl = `https://onglink.vercel.app/post/${post.id}`;
+			const message = `${post.title}\n\n${post.body}\n\nConfira na Onglink: ${postUrl}`;
+			await Share.share({
+				title: post.title,
+				message: Platform.OS === 'android' ? message : `${post.title}\n${post.body}`,
+				url: postUrl,
+			});
+		} catch (error) {
+			console.log('Erro ao compartilhar:', error);
+		}
+	};
+
+	// Excluir Publicação (Apenas se o post for do próprio usuário)
+	const handleDeletePost = (postId: string) => {
+		Alert.alert(
+			'Excluir Publicação',
+			'Tem certeza que deseja excluir esta publicação? Esta ação não pode ser desfeita.',
+			[
+				{ text: 'Cancelar', style: 'cancel' },
+				{
+					text: 'Excluir',
+					style: 'destructive',
+					onPress: async () => {
+						try {
+							await publicacaoService.deletarPublicacao(postId);
+							setPosts((current) => current.filter((p) => p.id !== postId));
+							Alert.alert('Sucesso', 'Publicação excluída com sucesso.');
+						} catch (error: any) {
+							console.error('Erro ao excluir:', error);
+							Alert.alert('Erro ao excluir', error.message || 'Não foi possível excluir a publicação.');
+						}
+					},
+				},
+			]
+		);
+	};
+
+	// Abertura do Modal de Denúncia
+	const handleOpenDenuncia = (postId: string) => {
+		setDenunciaPostId(postId);
+		setTipoDenuncia(TIPOS_DENUNCIA[0]);
+		setMotivoDenuncia('');
+		setDenunciaModalVisible(true);
+	};
+
+	// Envio da Denúncia ao Backend
+	const handleEnviarDenuncia = async () => {
+		if (!motivoDenuncia.trim()) {
+			Alert.alert('Motivo obrigatório', 'Por favor, descreva o motivo da sua denúncia.');
+			return;
+		}
+
+		if (!denunciaPostId) return;
+
+		try {
+			setIsEnviandoDenuncia(true);
+			await denunciaService.cadastrarDenuncia({
+				tipoDenuncia,
+				motivo: motivoDenuncia.trim(),
+				assignedTo: [denunciaPostId],
+			});
+
+			Alert.alert(
+				'Denúncia enviada',
+				'Sua denúncia foi registrada com sucesso! Nossa equipe irá avaliar o conteúdo.'
+			);
+			setDenunciaModalVisible(false);
+			setMotivoDenuncia('');
+			setDenunciaPostId(null);
+		} catch (error: any) {
+			console.error('Erro ao enviar denúncia:', error);
+			Alert.alert(
+				'Erro ao enviar denúncia',
+				error.message || 'Não foi possível registrar a denúncia. Tente novamente mais tarde.'
+			);
+		} finally {
+			setIsEnviandoDenuncia(false);
+		}
+	};
+
+	const handleNavigateToProfile = (post: FeedPost) => {
+		const authorPosts = posts.filter((p) =>
+			post.criadorId && p.criadorId ? p.criadorId === post.criadorId : p.author === post.author
+		);
+		navigation.navigate('Perfil', {
+			userId: post.criadorId,
+			posts: authorPosts,
+		});
 	};
 
 	const handleHomePress = () => {
 		if (!usuario) {
-			// Modo visitante: volta para a tela inicial Home da aplicação
 			navigation.navigate('Home');
 		} else {
-			// Modo logado: rola para o início da tela e atualiza as postagens
 			scrollViewRef.current?.scrollTo({ y: 0, animated: true });
 			loadPosts();
 		}
@@ -257,11 +362,20 @@ export default function Feed({ navigation, route }: Props) {
 					{usuario ? (
 						<View style={styles.userGreetingCard}>
 							<View style={styles.userGreetingLeft}>
-								<View style={[styles.userAvatar, !isOngOrAdmin && { backgroundColor: colors.brandGreen }]}>
-									<Text style={styles.userAvatarText}>
-										{(usuario.nome || 'ON').substring(0, 2).toUpperCase()}
-									</Text>
-								</View>
+								{(function() {
+									const ongLogo = typeof usuario.assignedTo === 'object' && usuario.assignedTo !== null ? usuario.assignedTo.logo : null;
+									const photoUri = ongLogo || (usuario as any).avatar || null;
+									if (photoUri) {
+										return <Image source={{ uri: photoUri }} style={styles.userAvatarImage} />;
+									}
+									return (
+										<View style={[styles.userAvatar, !isOngOrAdmin && { backgroundColor: colors.brandGreen }]}>
+											<Text style={styles.userAvatarText}>
+												{(usuario.nome || 'ON').substring(0, 2).toUpperCase()}
+											</Text>
+										</View>
+									);
+								})()}
 								<View style={styles.userGreetingTextContainer}>
 									<Text style={styles.userGreetingTitle}>
 										Olá, {usuario.nome.split(' ')[0]}! 👋
@@ -342,50 +456,77 @@ export default function Feed({ navigation, route }: Props) {
 						</View>
 					) : (
 						<View style={styles.postList}>
-							{posts.map((post) => (
-								<View key={post.id} style={styles.postCard}>
-									<View style={styles.postHeader}>
-										<View style={styles.avatar}>
-											<Text style={styles.avatarText}>{post.initials}</Text>
+							{posts.map((post) => {
+								const isOwner = Boolean(usuario?._id && post.criadorId && post.criadorId === usuario._id);
+
+								return (
+									<View key={post.id} style={styles.postCard}>
+										<View style={styles.postHeader}>
+										<TouchableOpacity style={styles.authorClickArea} activeOpacity={0.7} onPress={() => handleNavigateToProfile(post)}>
+											<View style={styles.avatar}>
+												<Text style={styles.avatarText}>{post.initials}</Text>
+											</View>
+											<View style={styles.authorInfo}>
+												<Text style={styles.authorName}>{post.author}</Text>
+												<Text style={styles.postMeta}>{post.description} · {post.time}</Text>
+											</View>
+										</TouchableOpacity>
+										
 										</View>
-										<View style={styles.authorInfo}>
-											<Text style={styles.authorName}>{post.author}</Text>
-											<Text style={styles.postMeta}>{post.description} · {post.time}</Text>
-										</View>
-										<View style={[styles.categoryTag, post.category === 'Pedido' && styles.requestTag]}>
-											<Text style={styles.categoryText}>{post.category}</Text>
+
+										<Text style={styles.postTitle}>{post.title}</Text>
+										<Text style={styles.postBody}>{post.body}</Text>
+										{post.imageUri && (
+											<Image source={{ uri: post.imageUri }} style={styles.postImage} />
+										)}
+										<Text style={styles.location}>{post.location}</Text>
+
+										{/* BARRA DE AÇÕES (Igual à versão Web: Compartilhar | Excluir / Denunciar) */}
+										<View style={styles.postActions}>
+											<TouchableOpacity
+												accessibilityRole="button"
+												accessibilityLabel="Compartilhar publicação"
+												style={styles.actionButton}
+												activeOpacity={0.7}
+												onPress={() => handleShare(post)}
+											>
+												<Text style={styles.actionIcon}>🔗</Text>
+												<Text style={styles.actionText}>Compartilhar</Text>
+											</TouchableOpacity>
+
+											{isOwner ? (
+												<TouchableOpacity
+													accessibilityRole="button"
+													accessibilityLabel="Excluir minha publicação"
+													style={styles.actionButton}
+													activeOpacity={0.7}
+													onPress={() => handleDeletePost(post.id)}
+												>
+													<Text style={styles.deleteIcon}>🗑️</Text>
+													<Text style={styles.deleteText}>Excluir</Text>
+												</TouchableOpacity>
+											) : (
+												<TouchableOpacity
+													accessibilityRole="button"
+													accessibilityLabel="Denunciar publicação"
+													style={styles.actionButton}
+													activeOpacity={0.7}
+													onPress={() => handleOpenDenuncia(post.id)}
+												>
+													<Text style={styles.reportIcon}>⚠️</Text>
+													<Text style={styles.reportText}>Denunciar</Text>
+												</TouchableOpacity>
+											)}
 										</View>
 									</View>
-
-									<Text style={styles.postTitle}>{post.title}</Text>
-									<Text style={styles.postBody}>{post.body}</Text>
-									{post.imageUri && (
-										<Image source={{ uri: post.imageUri }} style={styles.postImage} />
-									)}
-									<Text style={styles.location}>{post.location}</Text>
-
-									<View style={styles.postActions}>
-										<Pressable
-											accessibilityRole="button"
-											accessibilityLabel={`${post.isLiked ? 'Remover curtida' : 'Curtir'} publicação de ${post.author}`}
-											accessibilityState={{ selected: post.isLiked }}
-											onPress={() => toggleLike(post.id)}
-											style={styles.likeButton}
-										>
-											<Text style={[styles.likeText, post.isLiked && styles.likedText]}>
-												{post.isLiked ? 'Curtido' : 'Curtir'} · {post.likes + Number(post.isLiked)}
-											</Text>
-										</Pressable>
-										<Text style={styles.commentsText}>
-											{post.comments} {post.comments === 1 ? 'comentário' : 'comentários'}
-										</Text>
-									</View>
-								</View>
-							))}
+								);
+							})}
 						</View>
 					)}
 				</View>
 			</ScrollView>
+
+			{/* NAVEGAÇÃO INFERIOR */}
 			<View style={styles.bottomNavigation}>
 				<Pressable
 					accessibilityRole="button"
@@ -409,7 +550,7 @@ export default function Feed({ navigation, route }: Props) {
 					accessibilityRole="button"
 					accessibilityLabel="Perfil"
 					onPress={() => navigation.navigate('Perfil', {
-						posts: posts.filter((post) => post.author === (usuario?.nome || 'Você')),
+						posts: posts.filter((post) => (post.criadorId && usuario?._id ? post.criadorId === usuario._id : post.author === (usuario?.nome || 'Você'))),
 						usuario: usuario ?? undefined,
 					})}
 					style={styles.navigationButton}
@@ -417,6 +558,8 @@ export default function Feed({ navigation, route }: Props) {
 					<NavigationIcon name="profile" color={colors.brandGreenDark} />
 				</Pressable>
 			</View>
+
+			{/* MODAL DE CRIAÇÃO DE PUBLICAÇÃO */}
 			<Modal
 				visible={isComposerVisible}
 				transparent
@@ -446,47 +589,7 @@ export default function Feed({ navigation, route }: Props) {
 							</Pressable>
 						</View>
 
-						{/* Seletor de Categoria (Ação vs Pedido) */}
-						<View style={styles.categorySelectorContainer}>
-							<Text style={styles.inputLabel}>Categoria da publicação</Text>
-							<View style={styles.categoryButtonsRow}>
-								<TouchableOpacity
-									style={[
-										styles.categoryChoiceButton,
-										category === 'Ação' && styles.categoryChoiceActiveAcao,
-									]}
-									onPress={() => setCategory('Ação')}
-									activeOpacity={0.8}
-								>
-									<Text
-										style={[
-											styles.categoryChoiceText,
-											category === 'Ação' && styles.categoryChoiceTextActiveAcao,
-										]}
-									>
-										🎯 Ação
-									</Text>
-								</TouchableOpacity>
-
-								<TouchableOpacity
-									style={[
-										styles.categoryChoiceButton,
-										category === 'Pedido' && styles.categoryChoiceActivePedido,
-									]}
-									onPress={() => setCategory('Pedido')}
-									activeOpacity={0.8}
-								>
-									<Text
-										style={[
-											styles.categoryChoiceText,
-											category === 'Pedido' && styles.categoryChoiceTextActivePedido,
-										]}
-									>
-										🙏 Pedido
-									</Text>
-								</TouchableOpacity>
-							</View>
-						</View>
+						
 
 						{/* Campo de Título da Publicação */}
 						<TextInput
@@ -561,6 +664,107 @@ export default function Feed({ navigation, route }: Props) {
 					</View>
 				</KeyboardAvoidingView>
 			</Modal>
+
+			{/* MODAL DE DENÚNCIA DE PUBLICAÇÃO */}
+			<Modal
+				visible={denunciaModalVisible}
+				transparent
+				animationType="slide"
+				onRequestClose={() => !isEnviandoDenuncia && setDenunciaModalVisible(false)}
+			>
+				<KeyboardAvoidingView
+					behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+					style={styles.modalOverlay}
+				>
+					<Pressable
+						accessibilityRole="button"
+						accessibilityLabel="Fechar denúncia"
+						disabled={isEnviandoDenuncia}
+						onPress={() => setDenunciaModalVisible(false)}
+						style={styles.modalBackdrop}
+					/>
+					<View style={[styles.denunciaModal, isTablet && styles.tabletComposer]}>
+						<View style={styles.composerHeader}>
+							<Text style={styles.denunciaTitle}>⚠️ Denunciar Publicação</Text>
+							<Pressable
+								accessibilityRole="button"
+								accessibilityLabel="Fechar"
+								disabled={isEnviandoDenuncia}
+								onPress={() => setDenunciaModalVisible(false)}
+								style={styles.closeButton}
+							>
+								<Text style={styles.closeButtonText}>×</Text>
+							</Pressable>
+						</View>
+
+						<Text style={styles.denunciaSub}>
+							Selecione a categoria de violação:
+						</Text>
+
+						<View style={styles.denunciaChipsContainer}>
+							{TIPOS_DENUNCIA.map((tipo) => (
+								<TouchableOpacity
+									key={tipo}
+									style={[
+										styles.denunciaChip,
+										tipoDenuncia === tipo && styles.denunciaChipActive,
+									]}
+									onPress={() => setTipoDenuncia(tipo)}
+									activeOpacity={0.8}
+								>
+									<Text
+										style={[
+											styles.denunciaChipText,
+											tipoDenuncia === tipo && styles.denunciaChipTextActive,
+										]}
+									>
+										{tipo}
+									</Text>
+								</TouchableOpacity>
+							))}
+						</View>
+
+						<Text style={styles.inputLabel}>Descreva o motivo (obrigatório)</Text>
+						<TextInput
+							style={styles.denunciaInput}
+							placeholder="Explique por que esta publicação viola as regras da comunidade..."
+							placeholderTextColor={colors.textMuted}
+							multiline
+							numberOfLines={4}
+							value={motivoDenuncia}
+							onChangeText={setMotivoDenuncia}
+							editable={!isEnviandoDenuncia}
+						/>
+
+						<View style={styles.denunciaButtonsRow}>
+							<TouchableOpacity
+								style={styles.denunciaCancelButton}
+								activeOpacity={0.8}
+								disabled={isEnviandoDenuncia}
+								onPress={() => setDenunciaModalVisible(false)}
+							>
+								<Text style={styles.denunciaCancelText}>Cancelar</Text>
+							</TouchableOpacity>
+
+							<TouchableOpacity
+								style={[
+									styles.denunciaSubmitButton,
+									(!motivoDenuncia.trim() || isEnviandoDenuncia) && styles.disabledButton,
+								]}
+								activeOpacity={0.8}
+								disabled={!motivoDenuncia.trim() || isEnviandoDenuncia}
+								onPress={handleEnviarDenuncia}
+							>
+								{isEnviandoDenuncia ? (
+									<ActivityIndicator size="small" color="#FFF" />
+								) : (
+									<Text style={styles.denunciaSubmitText}>Enviar Denúncia</Text>
+								)}
+							</TouchableOpacity>
+						</View>
+					</View>
+				</KeyboardAvoidingView>
+			</Modal>
 		</View>
 	);
 }
@@ -620,16 +824,9 @@ const styles = StyleSheet.create({
 	},
 	tabletComposer: {
 		alignSelf: 'center',
-		maxWidth: 700,
+		borderRadius: 20,
+		maxWidth: 600,
 		width: '100%',
-	},
-	modalOverlay: {
-		backgroundColor: 'rgba(0, 0, 0, 0.35)',
-		flex: 1,
-		justifyContent: 'flex-end',
-	},
-	modalBackdrop: {
-		...StyleSheet.absoluteFillObject,
 	},
 	composerHeader: {
 		alignItems: 'center',
@@ -639,30 +836,17 @@ const styles = StyleSheet.create({
 	},
 	composerTitle: {
 		color: colors.textPrimary,
-		fontSize: 16,
+		fontSize: 18,
 		fontWeight: '700',
-	},
-	closeButton: {
-		alignItems: 'center',
-		height: 36,
-		justifyContent: 'center',
-		width: 36,
-	},
-	closeButtonText: {
-		color: colors.textSecondary,
-		fontSize: 28,
-		lineHeight: 32,
 	},
 	categorySelectorContainer: {
 		marginBottom: 12,
 	},
 	inputLabel: {
 		color: colors.textSecondary,
-		fontSize: 12,
+		fontSize: 13,
 		fontWeight: '600',
 		marginBottom: 6,
-		textTransform: 'uppercase',
-		letterSpacing: 0.5,
 	},
 	categoryButtonsRow: {
 		flexDirection: 'row',
@@ -670,35 +854,34 @@ const styles = StyleSheet.create({
 	},
 	categoryChoiceButton: {
 		flex: 1,
-		paddingVertical: 9,
-		paddingHorizontal: 12,
-		borderRadius: 8,
-		borderWidth: 1.5,
-		borderColor: '#D0E2E9',
-		backgroundColor: '#F8FAFC',
+		paddingVertical: 10,
+		borderRadius: 10,
+		borderWidth: 1,
+		borderColor: colors.inputBorder,
+		backgroundColor: colors.inputBackground,
 		alignItems: 'center',
 		justifyContent: 'center',
 	},
 	categoryChoiceActiveAcao: {
-		borderColor: colors.primary,
-		backgroundColor: '#E0F7FA',
+		backgroundColor: '#E8F5E9',
+		borderColor: colors.brandGreenDark,
 	},
 	categoryChoiceActivePedido: {
-		borderColor: '#E65100',
-		backgroundColor: '#FFF3E0',
+		backgroundColor: '#FFF8E1',
+		borderColor: '#FFA000',
 	},
 	categoryChoiceText: {
+		color: colors.textSecondary,
 		fontSize: 13,
 		fontWeight: '600',
-		color: colors.textSecondary,
 	},
 	categoryChoiceTextActiveAcao: {
-		color: colors.primaryDark,
-		fontWeight: 'bold',
+		color: colors.brandGreenDark,
+		fontWeight: '700',
 	},
 	categoryChoiceTextActivePedido: {
-		color: '#BF360C',
-		fontWeight: 'bold',
+		color: '#D97706',
+		fontWeight: '700',
 	},
 	titleInput: {
 		backgroundColor: colors.inputBackground,
@@ -706,11 +889,21 @@ const styles = StyleSheet.create({
 		borderRadius: 8,
 		borderWidth: 1,
 		color: colors.textPrimary,
-		fontSize: 14,
+		fontSize: 15,
 		fontWeight: '600',
+		marginBottom: 10,
 		paddingHorizontal: 12,
 		paddingVertical: 10,
-		marginBottom: 10,
+	},
+	closeButton: {
+		minHeight: 32,
+		justifyContent: 'center',
+		paddingHorizontal: 8,
+	},
+	closeButtonText: {
+		color: colors.textMuted,
+		fontSize: 22,
+		lineHeight: 24,
 	},
 	input: {
 		backgroundColor: colors.inputBackground,
@@ -719,14 +912,14 @@ const styles = StyleSheet.create({
 		borderWidth: 1,
 		color: colors.textPrimary,
 		fontSize: 14,
-		minHeight: 78,
+		minHeight: 90,
 		padding: 12,
 	},
 	composerFooter: {
 		alignItems: 'center',
 		flexDirection: 'row',
 		justifyContent: 'space-between',
-		marginTop: 12,
+		marginTop: 14,
 	},
 	characterCount: {
 		color: colors.textMuted,
@@ -735,51 +928,71 @@ const styles = StyleSheet.create({
 	publishButton: {
 		alignItems: 'center',
 		backgroundColor: colors.primary,
-		borderBottomColor: colors.primaryDark,
-		borderBottomWidth: 3,
 		borderRadius: 8,
 		justifyContent: 'center',
-		minHeight: 42,
-		paddingHorizontal: 20,
+		minHeight: 40,
+		paddingHorizontal: 18,
 	},
 	disabledButton: {
-		opacity: 0.5,
+		backgroundColor: colors.inputBorder,
+		opacity: 0.6,
 	},
 	publishButtonText: {
 		color: colors.textLight,
 		fontSize: 14,
 		fontWeight: '700',
 	},
+	modalOverlay: {
+		flex: 1,
+		justifyContent: 'flex-end',
+	},
+	modalBackdrop: {
+		backgroundColor: 'rgba(0, 0, 0, 0.45)',
+		bottom: 0,
+		left: 0,
+		position: 'absolute',
+		right: 0,
+		top: 0,
+	},
 	postList: {
-		gap: 12,
+		gap: 14,
+		width: '100%',
 	},
 	postCard: {
 		backgroundColor: colors.cardBackground,
-		borderRadius: 15,
+		borderRadius: 14,
+		elevation: 2,
 		padding: 16,
 		shadowColor: '#000',
 		shadowOffset: { width: 0, height: 2 },
-		shadowOpacity: 0.08,
-		shadowRadius: 5,
-		elevation: 3,
+		shadowOpacity: 0.06,
+		shadowRadius: 4,
 	},
 	postHeader: {
 		alignItems: 'center',
 		flexDirection: 'row',
-		marginBottom: 14,
+		gap: 12,
+		marginBottom: 10,
+	},
+	authorClickArea: {
+		alignItems: 'center',
+		flexDirection: 'row',
+		flex: 1,
+		gap: 12,
 	},
 	avatar: {
 		alignItems: 'center',
 		backgroundColor: colors.brandGreenLight,
-		borderRadius: 22,
-		height: 44,
+		borderColor: colors.brandGreen,
+		borderRadius: 20,
+		borderWidth: 1.5,
+		height: 40,
 		justifyContent: 'center',
-		marginRight: 10,
-		width: 44,
+		width: 40,
 	},
 	avatarText: {
 		color: colors.brandGreenDark,
-		fontSize: 14,
+		fontSize: 13,
 		fontWeight: '700',
 	},
 	authorInfo: {
@@ -787,44 +1000,43 @@ const styles = StyleSheet.create({
 	},
 	authorName: {
 		color: colors.textPrimary,
-		fontSize: 14,
+		fontSize: 15,
 		fontWeight: '700',
 	},
 	postMeta: {
 		color: colors.textMuted,
-		fontSize: 12,
-		marginTop: 2,
+		fontSize: 11,
+		marginTop: 1,
 	},
 	categoryTag: {
-		backgroundColor: colors.primary,
-		borderRadius: 6,
-		paddingHorizontal: 9,
-		paddingVertical: 5,
+		backgroundColor: colors.brandGreenLight,
+		borderRadius: 12,
+		paddingHorizontal: 10,
+		paddingVertical: 3,
 	},
 	requestTag: {
-		backgroundColor: '#E65100',
+		backgroundColor: '#FFF8E1',
 	},
 	categoryText: {
-		color: colors.textLight,
+		color: colors.brandGreenDark,
 		fontSize: 11,
 		fontWeight: '700',
 	},
 	postTitle: {
 		color: colors.textPrimary,
-		fontSize: 17,
+		fontSize: 15,
 		fontWeight: '700',
-		marginBottom: 6,
+		marginBottom: 4,
 	},
 	postBody: {
 		color: colors.textSecondary,
-		fontSize: 14,
-		lineHeight: 21,
+		fontSize: 13,
+		lineHeight: 19,
 	},
 	location: {
-		color: colors.brandGreenDark,
-		fontSize: 12,
-		fontWeight: '600',
-		marginTop: 10,
+		color: colors.textMuted,
+		fontSize: 11,
+		marginTop: 8,
 	},
 	postActions: {
 		alignItems: 'center',
@@ -835,22 +1047,38 @@ const styles = StyleSheet.create({
 		marginTop: 14,
 		paddingTop: 12,
 	},
-	likeButton: {
-		minHeight: 32,
-		justifyContent: 'center',
-		paddingRight: 12,
+	actionButton: {
+		alignItems: 'center',
+		flexDirection: 'row',
+		gap: 6,
+		minHeight: 36,
+		paddingHorizontal: 8,
+		paddingVertical: 6,
+		borderRadius: 8,
 	},
-	likeText: {
+	actionIcon: {
+		fontSize: 15,
+	},
+	actionText: {
 		color: colors.textSecondary,
-		fontSize: 13,
+		fontSize: 14,
 		fontWeight: '600',
 	},
-	likedText: {
-		color: colors.primary,
+	deleteIcon: {
+		fontSize: 15,
 	},
-	commentsText: {
+	deleteText: {
+		color: '#DC2626',
+		fontSize: 14,
+		fontWeight: '700',
+	},
+	reportIcon: {
+		fontSize: 15,
+	},
+	reportText: {
 		color: colors.textMuted,
-		fontSize: 12,
+		fontSize: 14,
+		fontWeight: '600',
 	},
 	postImage: {
 		aspectRatio: 4 / 3,
@@ -1006,6 +1234,14 @@ const styles = StyleSheet.create({
 		flex: 1,
 		gap: 10,
 	},
+	userAvatarImage: {
+		width: 42,
+		height: 42,
+		borderRadius: 21,
+		backgroundColor: '#FFF',
+		borderWidth: 1.5,
+		borderColor: colors.brandGreen,
+	},
 	userAvatar: {
 		width: 42,
 		height: 42,
@@ -1145,5 +1381,101 @@ const styles = StyleSheet.create({
 		color: colors.textLight,
 		fontSize: 13,
 		fontWeight: 'bold',
+	},
+
+	// Estilos do Modal de Denúncia
+	denunciaModal: {
+		backgroundColor: colors.cardBackground,
+		borderTopLeftRadius: 20,
+		borderTopRightRadius: 20,
+		padding: 20,
+		paddingBottom: 32,
+		shadowColor: '#000',
+		shadowOffset: { width: 0, height: 2 },
+		shadowOpacity: 0.1,
+		shadowRadius: 5,
+		elevation: 4,
+	},
+	denunciaTitle: {
+		color: colors.textPrimary,
+		fontSize: 18,
+		fontWeight: '700',
+	},
+	denunciaSub: {
+		color: colors.textSecondary,
+		fontSize: 13,
+		marginBottom: 12,
+		marginTop: 4,
+	},
+	denunciaChipsContainer: {
+		flexDirection: 'row',
+		flexWrap: 'wrap',
+		gap: 8,
+		marginBottom: 16,
+	},
+	denunciaChip: {
+		backgroundColor: '#F3F4F6',
+		borderColor: '#E5E7EB',
+		borderRadius: 20,
+		borderWidth: 1,
+		paddingHorizontal: 12,
+		paddingVertical: 7,
+	},
+	denunciaChipActive: {
+		backgroundColor: '#FEE2E2',
+		borderColor: '#EF4444',
+	},
+	denunciaChipText: {
+		color: colors.textSecondary,
+		fontSize: 12,
+		fontWeight: '600',
+	},
+	denunciaChipTextActive: {
+		color: '#B91C1C',
+		fontWeight: '700',
+	},
+	denunciaInput: {
+		backgroundColor: colors.inputBackground || '#F9FAFB',
+		borderColor: colors.inputBorder,
+		borderRadius: 10,
+		borderWidth: 1,
+		color: colors.textPrimary,
+		fontSize: 14,
+		minHeight: 90,
+		padding: 12,
+		textAlignVertical: 'top',
+		marginBottom: 18,
+	},
+	denunciaButtonsRow: {
+		flexDirection: 'row',
+		gap: 12,
+		justifyContent: 'flex-end',
+	},
+	denunciaCancelButton: {
+		alignItems: 'center',
+		backgroundColor: '#E5E7EB',
+		borderRadius: 10,
+		justifyContent: 'center',
+		paddingHorizontal: 18,
+		paddingVertical: 12,
+	},
+	denunciaCancelText: {
+		color: colors.textPrimary,
+		fontSize: 14,
+		fontWeight: '600',
+	},
+	denunciaSubmitButton: {
+		alignItems: 'center',
+		backgroundColor: '#DC2626',
+		borderRadius: 10,
+		justifyContent: 'center',
+		minWidth: 140,
+		paddingHorizontal: 18,
+		paddingVertical: 12,
+	},
+	denunciaSubmitText: {
+		color: '#FFF',
+		fontSize: 14,
+		fontWeight: '700',
 	},
 });

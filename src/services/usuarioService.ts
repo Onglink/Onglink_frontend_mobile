@@ -13,13 +13,39 @@ export interface LoginPayload {
   senha: string;
 }
 
+export interface OngPopulated {
+  _id: string;
+  razaoSocial?: string;
+  nomeFantasia?: string;
+  cnpj?: string;
+  telefone?: string;
+  email?: string;
+  descricao?: string;
+  causaSocial?: string;
+  logo?: string;
+  situacaoCadastral?: string;
+  endereco?: {
+    cidade?: string;
+    estado?: string;
+    bairro?: string;
+    rua?: string;
+    numeroEnd?: string;
+    cep?: string;
+  };
+  redeSocial?: {
+    instagram?: string;
+    facebook?: string;
+    site?: string;
+  };
+}
+
 export interface UsuarioResponse {
   _id: string;
   nome: string;
   cpf: string;
   email: string;
   status: 'user' | 'admin' | 'ong';
-  assignedTo?: string | null;
+  assignedTo?: string | OngPopulated | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -62,7 +88,8 @@ export const usuarioService = {
   buscarPorId: async (id: string) => {
     const res = await api.get<any>(`/usuarios/${id}`);
     const user = res?.usuario || res;
-    if (user && user._id) {
+    // Apenas sincroniza com o usuário logado em sessão se for o próprio perfil
+    if (usuarioLogado && user && user._id === usuarioLogado._id) {
       setUsuarioLogado(user);
     }
     return user as UsuarioResponse;
