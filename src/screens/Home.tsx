@@ -41,6 +41,14 @@ export default function Home({ navigation }: Props) {
         >
           <Text style={styles.secondaryButtonText}>Ver Feed como Visitante</Text>
         </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.ongButton}
+          activeOpacity={0.85}
+          onPress={() => navigation.navigate('Parceiros')}
+        >
+          <Text style={styles.ongButtonText}>🏢 Conhecer ONGs Cadastradas</Text>
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -140,5 +148,3 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 });
-
-
