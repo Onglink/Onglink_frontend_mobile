@@ -17,11 +17,16 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/SplashScreen_.jpg",
         "backgroundColor": "#FFFFFF"
-      }
+      },
+      "package": "com.onglink.onglinkmobile"
     },
     "web": {
       "favicon": "./assets/SplashScreen_.jpg"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "252634e1-6805-4218-bc08-9b5628f1bd66"
+      }
     }
   }
 }
-
