@@ -17,11 +17,11 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/SplashScreen_.jpg",
         "backgroundColor": "#FFFFFF"
-      }
+      },
+      "package": "com.anonymous.onglinkmobile"
     },
     "web": {
       "favicon": "./assets/SplashScreen_.jpg"
     }
   }
 }
-

@@ -8,6 +8,7 @@ import Home from './src/screens/Home';
 import Login from './src/screens/Login';
 import CadastroSimples from './src/screens/CadastroSimples';
 import CadastroCompleto from './src/screens/CadastroCompleto';
+import RecuperarSenha from './src/screens/RecuperarSenha';
 import Feed from './src/screens/Feed';
 import Perfil from './src/screens/Perfil';
 import Parceiros from './src/screens/Parceiros';
@@ -36,6 +37,7 @@ export type RootStackParamList = {
   Login: undefined;
   Cadastro: undefined;
   CadastroCompleto: undefined;
+  RecuperarSenha: undefined;
   Feed: { usuario?: UsuarioResponse } | undefined;
   Perfil: { posts?: ProfilePost[]; usuario?: UsuarioResponse; userId?: string } | undefined;
   Parceiros: undefined;
@@ -57,7 +59,7 @@ export default function App() {
       <StatusBar style="light" />
       <Stack.Navigator
         id="root"
-        initialRouteName="Home"
+        initialRouteName="Login"
         screenOptions={{
           headerStyle: {
             backgroundColor: colors.brandGreenDark,
@@ -69,6 +71,13 @@ export default function App() {
         }}
       >
         <Stack.Screen
+          name="Login"
+          component={Login}
+          options={{
+            headerShown: false,
+          }}
+        />
+        <Stack.Screen
           name="Home"
           component={Home}
           options={{
@@ -78,14 +87,14 @@ export default function App() {
           }}
         />
         <Stack.Screen
-          name="Login"
-          component={Login}
-          options={{ title: 'Entrar no ONGLink' }}
-        />
-        <Stack.Screen
           name="Cadastro"
           component={CadastroSimples}
           options={{ title: 'Criar Conta' }}
+        />
+        <Stack.Screen
+          name="RecuperarSenha"
+          component={RecuperarSenha}
+          options={{ title: 'Recuperar Senha' }}
         />
         <Stack.Screen
           name="CadastroCompleto"
