@@ -117,7 +117,7 @@ export default function Perfil({ route, navigation }: Props) {
 						usuarioService.logout();
 						navigation.reset({
 							index: 0,
-							routes: [{ name: 'Home' }],
+							routes: [{ name: 'Login' }],
 						});
 					},
 				},
