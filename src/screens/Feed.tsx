@@ -239,7 +239,7 @@ export default function Feed({ navigation, route }: Props) {
 
 	const handleHomePress = () => {
 		if (!usuario) {
-			navigation.navigate('Home');
+			navigation.navigate('Login');
 		} else {
 			scrollViewRef.current?.scrollTo({ y: 0, animated: true });
 			loadPosts();
@@ -417,9 +417,9 @@ export default function Feed({ navigation, route }: Props) {
 								<TouchableOpacity
 									style={styles.visitorHomeButton}
 									activeOpacity={0.8}
-									onPress={() => navigation.navigate('Home')}
+									onPress={() => navigation.navigate('Login')}
 								>
-									<Text style={styles.visitorHomeButtonText}>← Início</Text>
+									<Text style={styles.visitorHomeButtonText}>← Início / Login</Text>
 								</TouchableOpacity>
 								<TouchableOpacity
 									style={styles.visitorLoginButton}
