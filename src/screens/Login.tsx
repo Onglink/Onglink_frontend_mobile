@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage'; // <--- Importado
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
@@ -20,16 +21,73 @@ import usuarioService from '../services/usuarioService';
 
 type Props = NativeStackScreenProps<RootStackParamList, 'Login'>;
 
+// Chave base para o AsyncStorage
+const LOCKOUT_STORAGE_KEY = '@Onglink_Lockout_';
+
 export default function Login({ navigation }: Props) {
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const [tentativas, setTentativas] = useState(0);
+  const [lockoutTimer, setLockoutTimer] = useState(0);
+
   const { width } = useWindowDimensions();
   const isTablet = width > 600;
 
+  // Função para verificar se há bloqueio ativo ao digitar o e-mail ou carregar a tela
+  const verificarBloqueioExistente = async (emailConsultar: string) => {
+    if (!emailConsultar) return;
+    try {
+      const emailChave = emailConsultar.trim().toLowerCase();
+      const dadosSalvos = await AsyncStorage.getItem(LOCKOUT_STORAGE_KEY + emailChave);
+      
+      if (dadosSalvos) {
+        const { lockoutUntil, tentativasSalvas } = JSON.parse(dadosSalvos);
+        const agora = Date.now();
+        
+        if (lockoutUntil > agora) {
+          // Ainda está bloqueado, calcula quantos segundos faltam
+          const segundosRestantes = Math.ceil((lockoutUntil - agora) / 1000);
+          setLockoutTimer(segundosRestantes);
+          setTentativas(tentativasSalvas);
+        } else {
+          // O bloqueio já expirou, limpa os dados
+          await AsyncStorage.removeItem(LOCKOUT_STORAGE_KEY + emailChave);
+          setLockoutTimer(0);
+        }
+      } else {
+        setLockoutTimer(0);
+      }
+    } catch (error) {
+      console.error('Erro ao verificar lockout:', error);
+    }
+  };
+
+  // Efeito para rodar o cronômetro regressivo
+  useEffect(() => {
+    let interval: ReturnType<typeof setTimeout>;
+    if (lockoutTimer > 0) {
+      interval = setInterval(() => {
+        setLockoutTimer((prev) => {
+          if (prev <= 1) {
+            // Se o tempo acabou, limpa do storage
+            if (email) {
+              AsyncStorage.removeItem(LOCKOUT_STORAGE_KEY + email.trim().toLowerCase());
+            }
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [lockoutTimer, email]);
+
   const handleLogin = async () => {
+    if (lockoutTimer > 0) return;
+
     const emailLimpo = email.trim();
     if (!emailLimpo || !senha) {
       Alert.alert('Campos obrigatórios', 'Por favor, informe seu e-mail e senha.');
@@ -50,18 +108,55 @@ export default function Login({ navigation }: Props) {
         senha,
       });
 
+      // Sucesso: limpa o lockout e tentativas do AsyncStorage para este e-mail
+      await AsyncStorage.removeItem(LOCKOUT_STORAGE_KEY + emailLimpo.toLowerCase());
+      setTentativas(0);
+      setLockoutTimer(0);
+
       const usuario = response.usuario;
-      // Reseta a navegação tornando o Feed a tela raiz, sem botão de voltar para o Login
       navigation.reset({
         index: 0,
         routes: [{ name: 'Feed', params: { usuario } }],
       });
     } catch (error: any) {
       console.error('Erro no login mobile:', error);
-      const mensagemErro =
-        error.message ||
-        'Falha ao autenticar. Verifique seu e-mail, senha e conexão com o servidor.';
-      Alert.alert('Erro ao entrar', mensagemErro);
+
+      const novasTentativas = tentativas + 1;
+      setTentativas(novasTentativas);
+
+      let tempoDeBloqueio = 0;
+      if (novasTentativas >= 7) {
+        tempoDeBloqueio = 300; // 5 minutos
+      } else if (novasTentativas === 6) {
+        tempoDeBloqueio = 60;  // 1 minuto
+      } else if (novasTentativas === 5) {
+        tempoDeBloqueio = 30;  // 30 segundos
+      }
+
+      if (tempoDeBloqueio > 0) {
+        const lockoutUntil = Date.now() + tempoDeBloqueio * 1000;
+        
+        // Salva de forma persistente no dispositivo
+        try {
+          await AsyncStorage.setItem(
+            LOCKOUT_STORAGE_KEY + emailLimpo.toLowerCase(),
+            JSON.stringify({ lockoutUntil, tentativasSalvas: novasTentativas })
+          );
+        } catch (e) {
+          console.error('Erro ao salvar lockout:', e);
+        }
+
+        setLockoutTimer(tempoDeBloqueio);
+        Alert.alert(
+          'Conta temporariamente bloqueada',
+          `Muitas tentativas incorretas. Aguarde ${tempoDeBloqueio} segundos para tentar novamente.`
+        );
+      } else {
+        const mensagemErro =
+          error.message ||
+          'Falha ao autenticar. Verifique seu e-mail, senha e conexão com o servidor.';
+        Alert.alert('Erro ao entrar', `${mensagemErro} (Tentativa ${novasTentativas}/5)`);
+      }
     } finally {
       setLoading(false);
     }
@@ -94,18 +189,32 @@ export default function Login({ navigation }: Props) {
             </Text>
           </View>
 
+          {/* Aviso visual de Bloqueio Progressivo */}
+          {estaBloqueado && (
+            <View style={styles.lockoutBox}>
+              <Text style={styles.lockoutText}>
+                ⚠️ Acesso temporariamente restrito devido a excesso de tentativas. Tente novamente em{' '}
+                <Text style={styles.lockoutTimerBold}>{formatarTempo(lockoutTimer)}</Text>.
+              </Text>
+            </View>
+          )}
+
           {/* Campo E-mail */}
           <View style={styles.inputGroup}>
             <Text style={styles.label}>E-mail</Text>
             <TextInput
-              style={styles.input}
+              style={[styles.input, estaBloqueado && styles.inputDisabled]}
               placeholder="seu@email.com"
               placeholderTextColor={colors.textMuted}
               keyboardType="email-address"
               autoCapitalize="none"
               autoCorrect={false}
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(text) => {
+                setEmail(text);
+                verificarBloqueioExistente(text); // Verifica se este e-mail possui bloqueio ativo ao digitar
+              }}
+              editable={!estaBloqueado}
             />
           </View>
 
@@ -116,20 +225,22 @@ export default function Login({ navigation }: Props) {
               <TouchableOpacity
                 onPress={() => setShowPassword((prev) => !prev)}
                 activeOpacity={0.7}
+                disabled={estaBloqueado}
               >
-                <Text style={styles.togglePasswordText}>
+                <Text style={[styles.togglePasswordText, estaBloqueado && { opacity: 0.5 }]}>
                   {showPassword ? 'Ocultar' : 'Mostrar'}
                 </Text>
               </TouchableOpacity>
             </View>
             <TextInput
-              style={styles.input}
+              style={[styles.input, estaBloqueado && styles.inputDisabled]}
               placeholder="Sua senha de acesso"
               placeholderTextColor={colors.textMuted}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               value={senha}
               onChangeText={setSenha}
+              editable={!estaBloqueado}
             />
             <TouchableOpacity
               onPress={handleEsqueciSenha}
@@ -142,10 +253,13 @@ export default function Login({ navigation }: Props) {
 
           {/* Botão Principal: Entrar */}
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+            style={[
+              styles.button,
+              (loading || estaBloqueado) && styles.buttonDisabled,
+            ]}
             activeOpacity={0.85}
             onPress={handleLogin}
-            disabled={loading}
+            disabled={loading || estaBloqueado}
           >
             {loading ? (
               <ActivityIndicator color={colors.textLight} />
@@ -245,6 +359,23 @@ const styles = StyleSheet.create({
     lineHeight: 18,
     paddingHorizontal: 8,
   },
+  lockoutBox: {
+    backgroundColor: '#FFF3CD',
+    borderColor: '#FFEEBA',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+  },
+  lockoutText: {
+    color: '#856404',
+    fontSize: 13,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
+  lockoutTimerBold: {
+    fontWeight: 'bold',
+  },
   inputGroup: {
     marginBottom: 14,
   },
@@ -295,6 +426,8 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.7,
+    backgroundColor: '#6C757D',
+    borderBottomColor: '#495057',
   },
   buttonText: {
     color: colors.textLight,
