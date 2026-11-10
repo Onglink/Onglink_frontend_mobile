@@ -13,7 +13,7 @@ import {
   ActivityIndicator,
   Image,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage'; // <--- Importado
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../../App';
 import { colors } from '../utils/theme';
@@ -166,6 +166,18 @@ export default function Login({ navigation }: Props) {
     navigation.navigate('RecuperarSenha');
   };
 
+  // Função auxiliar formatarTempo restaurada
+  const formatarTempo = (segundos: number) => {
+    const mins = Math.floor(segundos / 60);
+    const secs = segundos % 60;
+    if (mins > 0) {
+      return `${mins}m ${secs < 10 ? '0' : ''}${secs}s`;
+    }
+    return `${secs}s`;
+  };
+
+  const estaBloqueado = lockoutTimer > 0;
+
   return (
     <KeyboardAvoidingView
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -264,7 +276,9 @@ export default function Login({ navigation }: Props) {
             {loading ? (
               <ActivityIndicator color={colors.textLight} />
             ) : (
-              <Text style={styles.buttonText}>🔑 Entrar na Minha Conta</Text>
+              <Text style={styles.buttonText}>
+                {estaBloqueado ? `Aguarde ${formatarTempo(lockoutTimer)}` : '🔑 Entrar na Minha Conta'}
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -405,6 +419,10 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 15,
     color: colors.textPrimary,
+  },
+  inputDisabled: {
+    backgroundColor: '#E9ECEF',
+    color: '#6C757D',
   },
   forgotPasswordContainer: {
     alignSelf: 'flex-end',
