@@ -9,7 +9,7 @@ import { Platform } from 'react-native';
  */
 
 // Cole aqui a URL do backend na nuvem (ex: 'https://onglink-backend.onrender.com'):
-export const REMOTE_API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://163.176.72.142:4000/';
+export const REMOTE_API_URL = process.env.EXPO_PUBLIC_API_URL || 'https://onglink.duckdns.org'; //'http://163.176.72.142:4000/';
 
 // Mude para true quando quiser usar o backend na nuvem, ou false para testar localmente:
 export const USE_REMOTE = Boolean(REMOTE_API_URL);
