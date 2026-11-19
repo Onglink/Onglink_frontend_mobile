@@ -2,12 +2,13 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
 	ActivityIndicator,
 	Alert,
+	FlatList,
 	Image,
 	KeyboardAvoidingView,
 	Modal,
 	Platform,
 	Pressable,
-	ScrollView,
+	RefreshControl,
 	Share,
 	StyleSheet,
 	Text,
@@ -15,7 +16,6 @@ import {
 	TouchableOpacity,
 	View,
 	useWindowDimensions,
-	RefreshControl,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -28,6 +28,8 @@ import { getUsuarioLogado } from '../services/usuarioService';
 type Props = NativeStackScreenProps<RootStackParamList, 'Feed'>;
 
 type FeedPost = ProfilePost;
+
+const POSTS_PER_PAGE = 10;
 
 const TIPOS_DENUNCIA = [
 	'Conteudo sensível',
@@ -43,8 +45,13 @@ export default function Feed({ navigation, route }: Props) {
 	const isTablet = width > 600;
 	const usuario = route.params?.usuario || getUsuarioLogado();
 	const isOngOrAdmin = usuario?.status === 'ong' || usuario?.status === 'admin';
+
 	const [posts, setPosts] = useState<FeedPost[]>([]);
 	const [loading, setLoading] = useState(true);
+	const [isFetchingMore, setIsFetchingMore] = useState(false);
+	const [page, setPage] = useState(1);
+	const [hasMore, setHasMore] = useState(true);
+
 	const [isPublishing, setIsPublishing] = useState(false);
 	const [title, setTitle] = useState('');
 	const [category, setCategory] = useState<'Ação' | 'Pedido'>('Ação');
@@ -53,7 +60,9 @@ export default function Feed({ navigation, route }: Props) {
 	const [isComposerVisible, setIsComposerVisible] = useState(false);
 	const [refreshing, setRefreshing] = useState(false);
 	const canPublish = title.trim().length > 0 && (draft.trim().length > 0 || selectedImage !== null);
-	const scrollViewRef = useRef<ScrollView>(null);
+
+	const flatListRef = useRef<FlatList<FeedPost>>(null);
+	const isFetchingRef = useRef(false);
 
 	// Estados do Modal de Denúncia
 	const [denunciaModalVisible, setDenunciaModalVisible] = useState(false);
@@ -62,53 +71,91 @@ export default function Feed({ navigation, route }: Props) {
 	const [motivoDenuncia, setMotivoDenuncia] = useState('');
 	const [isEnviandoDenuncia, setIsEnviandoDenuncia] = useState(false);
 
-	// Carrega as publicações reais do backend da nuvem
-	const loadPosts = useCallback(async () => {
+	const mapBackendPost = (item: any): FeedPost => {
+		const authorName =
+			item.criadoPor?.assignedTo?.nomeFantasia ||
+			item.criadoPor?.assignedTo?.nome ||
+			item.criadoPor?.nome ||
+			'ONG Parceira';
+
+		const itemCategory =
+			item.categoria === 'Pedido' || item.categoria === 'Ação' ? item.categoria : 'Ação';
+
+		const criadorId =
+			typeof item.criadoPor === 'object' && item.criadoPor !== null
+				? item.criadoPor._id
+				: typeof item.criadoPor === 'string'
+				? item.criadoPor
+				: undefined;
+
+		return {
+			id: item._id,
+			criadorId,
+			author: authorName,
+			description: item.criadoPor?.assignedTo ? 'ONG Verificada' : 'Membro Onglink',
+			initials: (authorName || 'ON').substring(0, 2).toUpperCase(),
+			category: itemCategory,
+			location: 'Comunidade Onglink',
+			time: item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-BR') : 'Recente',
+			title: item.titulo || 'Publicação',
+			body: item.descricao || '',
+			imageUri: item.imagem && item.imagem.length > 0 ? item.imagem[0] : null,
+		};
+	};
+
+	// Carrega as publicações paginadas do backend
+	const loadPosts = useCallback(async (targetPage: number = 1, isPullToRefresh: boolean = false) => {
+		if (isFetchingRef.current) return;
+		isFetchingRef.current = true;
+
+		if (targetPage === 1 && !isPullToRefresh) {
+			setLoading(true);
+		} else if (targetPage > 1) {
+			setIsFetchingMore(true);
+		}
+
 		try {
-			const data = await publicacaoService.listarPublicacoes();
-			if (Array.isArray(data)) {
-				const mapped: FeedPost[] = data.map((item) => {
-					const authorName = item.criadoPor?.assignedTo?.nomeFantasia || item.criadoPor?.nome || 'ONG Parceira';
-					const itemCategory = (item.categoria === 'Pedido' || item.categoria === 'Ação')
-						? item.categoria
-						: 'Ação';
+			const { publicacoes, hasMore: temMais } = await publicacaoService.listarPublicacoes(
+				targetPage,
+				POSTS_PER_PAGE
+			);
 
-					const criadorId = typeof item.criadoPor === 'object' && item.criadoPor !== null
-						? item.criadoPor._id
-						: (typeof item.criadoPor === 'string' ? item.criadoPor : undefined);
+			const mapped: FeedPost[] = Array.isArray(publicacoes)
+				? publicacoes.map(mapBackendPost)
+				: [];
 
-					return {
-						id: item._id,
-						criadorId,
-						author: authorName,
-						description: item.criadoPor?.assignedTo ? 'ONG Verificada' : 'Membro Onglink',
-						initials: (authorName || 'ON').substring(0, 2).toUpperCase(),
-						category: itemCategory,
-						location: 'Comunidade Onglink',
-						time: item.createdAt ? new Date(item.createdAt).toLocaleDateString('pt-BR') : 'Recente',
-						title: item.titulo || 'Publicação',
-						body: item.descricao || '',
-						imageUri: item.imagem && item.imagem.length > 0 ? item.imagem[0] : null,
-					};
-				});
-				setPosts(mapped);
-			}
+			setPosts((prev) => {
+				if (targetPage === 1) return mapped;
+				const existingIds = new Set(prev.map((p) => p.id));
+				const uniqueNew = mapped.filter((p) => !existingIds.has(p.id));
+				return [...prev, ...uniqueNew];
+			});
+
+			setHasMore(temMais);
+			setPage(targetPage);
 		} catch (error) {
 			console.log('Erro ao carregar publicações da nuvem:', error);
 		} finally {
 			setLoading(false);
+			setIsFetchingMore(false);
+			isFetchingRef.current = false;
 		}
 	}, []);
 
 	useEffect(() => {
-		loadPosts();
+		loadPosts(1);
 	}, [loadPosts]);
 
 	const onRefresh = useCallback(async () => {
 		setRefreshing(true);
-		await loadPosts();
+		await loadPosts(1, true);
 		setRefreshing(false);
 	}, [loadPosts]);
+
+	const handleLoadMore = () => {
+		if (loading || isFetchingMore || !hasMore || isFetchingRef.current) return;
+		loadPosts(page + 1);
+	};
 
 	const chooseImage = async () => {
 		try {
@@ -241,8 +288,8 @@ export default function Feed({ navigation, route }: Props) {
 		if (!usuario) {
 			navigation.navigate('Login');
 		} else {
-			scrollViewRef.current?.scrollTo({ y: 0, animated: true });
-			loadPosts();
+			flatListRef.current?.scrollToOffset({ offset: 0, animated: true });
+			loadPosts(1);
 		}
 	};
 
@@ -330,8 +377,7 @@ export default function Feed({ navigation, route }: Props) {
 				await publicacaoService.criarPublicacao(formData);
 			}
 
-			// Recarrega as publicações diretamente da nuvem
-			await loadPosts();
+			await loadPosts(1);
 			handleCloseComposer();
 		} catch (error: any) {
 			console.error('Erro ao publicar:', error);
@@ -341,13 +387,216 @@ export default function Feed({ navigation, route }: Props) {
 		}
 	};
 
+	const renderHeader = () => (
+		<View style={[styles.content, isTablet && styles.tabletContent]}>
+			{usuario ? (
+				<View style={styles.userGreetingCard}>
+					<View style={styles.userGreetingLeft}>
+						{(function () {
+							const ongLogo =
+								typeof usuario.assignedTo === 'object' && usuario.assignedTo !== null
+									? usuario.assignedTo.logo
+									: null;
+							const photoUri = ongLogo || (usuario as any).avatar || null;
+							if (photoUri) {
+								return <Image source={{ uri: photoUri }} style={styles.userAvatarImage} />;
+							}
+							return (
+								<View style={[styles.userAvatar, !isOngOrAdmin && { backgroundColor: colors.brandGreen }]}>
+									<Text style={styles.userAvatarText}>
+										{(usuario.nome || 'ON').substring(0, 2).toUpperCase()}
+									</Text>
+								</View>
+							);
+						})()}
+						<View style={styles.userGreetingTextContainer}>
+							<Text style={styles.userGreetingTitle}>
+								Olá, {usuario.nome.split(' ')[0]}! 👋
+							</Text>
+							<Text style={styles.userGreetingSub}>
+								{isOngOrAdmin
+									? '🏢 ONG Verificada · Permissão para publicar'
+									: '🤝 Usuário Comum · Complete o cadastro de ONG para postar'}
+							</Text>
+						</View>
+					</View>
+					{isOngOrAdmin ? (
+						<TouchableOpacity
+							style={styles.newPostQuickButton}
+							activeOpacity={0.8}
+							onPress={handleOpenComposer}
+						>
+							<Text style={styles.newPostQuickText}>+ Postar</Text>
+						</TouchableOpacity>
+					) : (
+						<TouchableOpacity
+							style={[styles.newPostQuickButton, { backgroundColor: colors.primary }]}
+							activeOpacity={0.8}
+							onPress={() => navigation.navigate('CadastroCompleto')}
+						>
+							<Text style={styles.newPostQuickText}>Virar ONG</Text>
+						</TouchableOpacity>
+					)}
+				</View>
+			) : (
+				<View style={styles.visitorCard}>
+					<View style={styles.visitorTextContainer}>
+						<Text style={styles.visitorTitle}>Modo Visitante 👁️</Text>
+						<Text style={styles.visitorSub}>
+							Conecte-se para interagir ou retorne à tela inicial.
+						</Text>
+					</View>
+					<View style={styles.visitorButtonsRow}>
+						<TouchableOpacity
+							style={styles.visitorHomeButton}
+							activeOpacity={0.8}
+							onPress={() => navigation.navigate('Login')}
+						>
+							<Text style={styles.visitorHomeButtonText}>← Início / Login</Text>
+						</TouchableOpacity>
+						<TouchableOpacity
+							style={styles.visitorLoginButton}
+							activeOpacity={0.8}
+							onPress={() => navigation.navigate('Login')}
+						>
+							<Text style={styles.visitorLoginButtonText}>Entrar</Text>
+						</TouchableOpacity>
+					</View>
+				</View>
+			)}
+		</View>
+	);
+
+	const renderEmpty = () => {
+		if (loading) {
+			return (
+				<View style={[styles.content, isTablet && styles.tabletContent, styles.loadingContainer]}>
+					<ActivityIndicator size="large" color={colors.brandGreenDark} />
+					<Text style={styles.loadingText}>Carregando publicações da comunidade...</Text>
+				</View>
+			);
+		}
+
+		return (
+			<View style={[styles.content, isTablet && styles.tabletContent, styles.emptyContainer]}>
+				<Text style={styles.emptyIcon}>📢</Text>
+				<Text style={styles.emptyTitle}>Nenhuma publicação encontrada</Text>
+				<Text style={styles.emptySub}>
+					Ainda não há postagens no feed em nuvem. Puxe a tela para baixo para atualizar!
+				</Text>
+				{isOngOrAdmin && (
+					<TouchableOpacity
+						style={styles.emptyButton}
+						activeOpacity={0.8}
+						onPress={handleOpenComposer}
+					>
+						<Text style={styles.emptyButtonText}>+ Criar primeira publicação</Text>
+					</TouchableOpacity>
+				)}
+			</View>
+		);
+	};
+
+	const renderFooter = () => {
+		if (loading || posts.length === 0) return null;
+
+		return (
+			<View style={styles.footerContainer}>
+				{isFetchingMore ? (
+					<ActivityIndicator size="small" color={colors.brandGreenDark} />
+				) : !hasMore ? (
+					<Text style={styles.footerText}>Você chegou ao fim das publicações.</Text>
+				) : null}
+			</View>
+		);
+	};
+
+	const renderPostItem = ({ item: post }: { item: FeedPost }) => {
+		const isOwner = Boolean(usuario?._id && post.criadorId && post.criadorId === usuario._id);
+
+		return (
+			<View style={[styles.content, isTablet && styles.tabletContent]}>
+				<View style={styles.postCard}>
+					<View style={styles.postHeader}>
+						<TouchableOpacity
+							style={styles.authorClickArea}
+							activeOpacity={0.7}
+							onPress={() => handleNavigateToProfile(post)}
+						>
+							<View style={styles.avatar}>
+								<Text style={styles.avatarText}>{post.initials}</Text>
+							</View>
+							<View style={styles.authorInfo}>
+								<Text style={styles.authorName}>{post.author}</Text>
+								<Text style={styles.postMeta}>{post.description} · {post.time}</Text>
+							</View>
+						</TouchableOpacity>
+					</View>
+
+					<Text style={styles.postTitle}>{post.title}</Text>
+					<Text style={styles.postBody}>{post.body}</Text>
+					{post.imageUri && (
+						<Image source={{ uri: post.imageUri }} style={styles.postImage} />
+					)}
+					<Text style={styles.location}>{post.location}</Text>
+
+					<View style={styles.postActions}>
+						<TouchableOpacity
+							accessibilityRole="button"
+							accessibilityLabel="Compartilhar publicação"
+							style={styles.actionButton}
+							activeOpacity={0.7}
+							onPress={() => handleShare(post)}
+						>
+							<Text style={styles.actionIcon}>🔗</Text>
+							<Text style={styles.actionText}>Compartilhar</Text>
+						</TouchableOpacity>
+
+						{isOwner ? (
+							<TouchableOpacity
+								accessibilityRole="button"
+								accessibilityLabel="Excluir minha publicação"
+								style={styles.actionButton}
+								activeOpacity={0.7}
+								onPress={() => handleDeletePost(post.id)}
+							>
+								<Text style={styles.deleteIcon}>🗑️</Text>
+								<Text style={styles.deleteText}>Excluir</Text>
+							</TouchableOpacity>
+						) : (
+							<TouchableOpacity
+								accessibilityRole="button"
+								accessibilityLabel="Denunciar publicação"
+								style={styles.actionButton}
+								activeOpacity={0.7}
+								onPress={() => handleOpenDenuncia(post.id)}
+							>
+								<Text style={styles.reportIcon}>⚠️</Text>
+								<Text style={styles.reportText}>Denunciar</Text>
+							</TouchableOpacity>
+						)}
+					</View>
+				</View>
+			</View>
+		);
+	};
+
 	return (
 		<View style={styles.screen}>
-			<ScrollView
-				ref={scrollViewRef}
+			<FlatList
+				ref={flatListRef}
+				data={loading ? [] : posts}
+				keyExtractor={(item) => item.id}
+				renderItem={renderPostItem}
 				style={styles.container}
 				contentContainerStyle={styles.scrollContent}
 				keyboardShouldPersistTaps="handled"
+				ListHeaderComponent={renderHeader}
+				ListEmptyComponent={renderEmpty}
+				ListFooterComponent={renderFooter}
+				ItemSeparatorComponent={() => <View style={styles.itemSeparator} />}
+				onEndReached={handleLoadMore}
+				onEndReachedThreshold={0.4}
 				refreshControl={
 					<RefreshControl
 						refreshing={refreshing}
@@ -356,175 +605,7 @@ export default function Feed({ navigation, route }: Props) {
 						tintColor={colors.primary}
 					/>
 				}
-			>
-				<View style={[styles.content, isTablet && styles.tabletContent]}>
-					{/* Banner Informativo / Boas-vindas */}
-					{usuario ? (
-						<View style={styles.userGreetingCard}>
-							<View style={styles.userGreetingLeft}>
-								{(function() {
-									const ongLogo = typeof usuario.assignedTo === 'object' && usuario.assignedTo !== null ? usuario.assignedTo.logo : null;
-									const photoUri = ongLogo || (usuario as any).avatar || null;
-									if (photoUri) {
-										return <Image source={{ uri: photoUri }} style={styles.userAvatarImage} />;
-									}
-									return (
-										<View style={[styles.userAvatar, !isOngOrAdmin && { backgroundColor: colors.brandGreen }]}>
-											<Text style={styles.userAvatarText}>
-												{(usuario.nome || 'ON').substring(0, 2).toUpperCase()}
-											</Text>
-										</View>
-									);
-								})()}
-								<View style={styles.userGreetingTextContainer}>
-									<Text style={styles.userGreetingTitle}>
-										Olá, {usuario.nome.split(' ')[0]}! 👋
-									</Text>
-									<Text style={styles.userGreetingSub}>
-										{isOngOrAdmin
-											? '🏢 ONG Verificada · Permissão para publicar'
-											: '🤝 Usuário Comum · Complete o cadastro de ONG para postar'}
-									</Text>
-								</View>
-							</View>
-							{isOngOrAdmin ? (
-								<TouchableOpacity
-									style={styles.newPostQuickButton}
-									activeOpacity={0.8}
-									onPress={handleOpenComposer}
-								>
-									<Text style={styles.newPostQuickText}>+ Postar</Text>
-								</TouchableOpacity>
-							) : (
-								<TouchableOpacity
-									style={[styles.newPostQuickButton, { backgroundColor: colors.primary }]}
-									activeOpacity={0.8}
-									onPress={() => navigation.navigate('CadastroCompleto')}
-								>
-									<Text style={styles.newPostQuickText}>Virar ONG</Text>
-								</TouchableOpacity>
-							)}
-						</View>
-					) : (
-						<View style={styles.visitorCard}>
-							<View style={styles.visitorTextContainer}>
-								<Text style={styles.visitorTitle}>Modo Visitante 👁️</Text>
-								<Text style={styles.visitorSub}>
-									Conecte-se para interagir ou retorne à tela inicial.
-								</Text>
-							</View>
-							<View style={styles.visitorButtonsRow}>
-								<TouchableOpacity
-									style={styles.visitorHomeButton}
-									activeOpacity={0.8}
-									onPress={() => navigation.navigate('Login')}
-								>
-									<Text style={styles.visitorHomeButtonText}>← Início / Login</Text>
-								</TouchableOpacity>
-								<TouchableOpacity
-									style={styles.visitorLoginButton}
-									activeOpacity={0.8}
-									onPress={() => navigation.navigate('Login')}
-								>
-									<Text style={styles.visitorLoginButtonText}>Entrar</Text>
-								</TouchableOpacity>
-							</View>
-						</View>
-					)}
-
-					{loading ? (
-						<View style={styles.loadingContainer}>
-							<ActivityIndicator size="large" color={colors.brandGreenDark} />
-							<Text style={styles.loadingText}>Carregando publicações da comunidade...</Text>
-						</View>
-					) : posts.length === 0 ? (
-						<View style={styles.emptyContainer}>
-							<Text style={styles.emptyIcon}>📢</Text>
-							<Text style={styles.emptyTitle}>Nenhuma publicação encontrada</Text>
-							<Text style={styles.emptySub}>
-								Ainda não há postagens no feed em nuvem. Puxe a tela para baixo para atualizar!
-							</Text>
-							{isOngOrAdmin && (
-								<TouchableOpacity
-									style={styles.emptyButton}
-									activeOpacity={0.8}
-									onPress={handleOpenComposer}
-								>
-									<Text style={styles.emptyButtonText}>+ Criar primeira publicação</Text>
-								</TouchableOpacity>
-							)}
-						</View>
-					) : (
-						<View style={styles.postList}>
-							{posts.map((post) => {
-								const isOwner = Boolean(usuario?._id && post.criadorId && post.criadorId === usuario._id);
-
-								return (
-									<View key={post.id} style={styles.postCard}>
-										<View style={styles.postHeader}>
-										<TouchableOpacity style={styles.authorClickArea} activeOpacity={0.7} onPress={() => handleNavigateToProfile(post)}>
-											<View style={styles.avatar}>
-												<Text style={styles.avatarText}>{post.initials}</Text>
-											</View>
-											<View style={styles.authorInfo}>
-												<Text style={styles.authorName}>{post.author}</Text>
-												<Text style={styles.postMeta}>{post.description} · {post.time}</Text>
-											</View>
-										</TouchableOpacity>
-										
-										</View>
-
-										<Text style={styles.postTitle}>{post.title}</Text>
-										<Text style={styles.postBody}>{post.body}</Text>
-										{post.imageUri && (
-											<Image source={{ uri: post.imageUri }} style={styles.postImage} />
-										)}
-										<Text style={styles.location}>{post.location}</Text>
-
-										{/* BARRA DE AÇÕES (Igual à versão Web: Compartilhar | Excluir / Denunciar) */}
-										<View style={styles.postActions}>
-											<TouchableOpacity
-												accessibilityRole="button"
-												accessibilityLabel="Compartilhar publicação"
-												style={styles.actionButton}
-												activeOpacity={0.7}
-												onPress={() => handleShare(post)}
-											>
-												<Text style={styles.actionIcon}>🔗</Text>
-												<Text style={styles.actionText}>Compartilhar</Text>
-											</TouchableOpacity>
-
-											{isOwner ? (
-												<TouchableOpacity
-													accessibilityRole="button"
-													accessibilityLabel="Excluir minha publicação"
-													style={styles.actionButton}
-													activeOpacity={0.7}
-													onPress={() => handleDeletePost(post.id)}
-												>
-													<Text style={styles.deleteIcon}>🗑️</Text>
-													<Text style={styles.deleteText}>Excluir</Text>
-												</TouchableOpacity>
-											) : (
-												<TouchableOpacity
-													accessibilityRole="button"
-													accessibilityLabel="Denunciar publicação"
-													style={styles.actionButton}
-													activeOpacity={0.7}
-													onPress={() => handleOpenDenuncia(post.id)}
-												>
-													<Text style={styles.reportIcon}>⚠️</Text>
-													<Text style={styles.reportText}>Denunciar</Text>
-												</TouchableOpacity>
-											)}
-										</View>
-									</View>
-								);
-							})}
-						</View>
-					)}
-				</View>
-			</ScrollView>
+			/>
 
 			{/* NAVEGAÇÃO INFERIOR */}
 			<View style={styles.bottomNavigation}>
@@ -549,10 +630,16 @@ export default function Feed({ navigation, route }: Props) {
 				<Pressable
 					accessibilityRole="button"
 					accessibilityLabel="Perfil"
-					onPress={() => navigation.navigate('Perfil', {
-						posts: posts.filter((post) => (post.criadorId && usuario?._id ? post.criadorId === usuario._id : post.author === (usuario?.nome || 'Você'))),
-						usuario: usuario ?? undefined,
-					})}
+					onPress={() =>
+						navigation.navigate('Perfil', {
+							posts: posts.filter((post) =>
+								post.criadorId && usuario?._id
+									? post.criadorId === usuario._id
+									: post.author === (usuario?.nome || 'Você')
+							),
+							usuario: usuario ?? undefined,
+						})
+					}
 					style={styles.navigationButton}
 				>
 					<NavigationIcon name="profile" color={colors.brandGreenDark} />
@@ -589,9 +676,6 @@ export default function Feed({ navigation, route }: Props) {
 							</Pressable>
 						</View>
 
-						
-
-						{/* Campo de Título da Publicação */}
 						<TextInput
 							accessibilityLabel="Título da publicação"
 							style={styles.titleInput}
@@ -602,7 +686,6 @@ export default function Feed({ navigation, route }: Props) {
 							maxLength={100}
 						/>
 
-						{/* Campo de Descrição */}
 						<TextInput
 							accessibilityLabel="Escreva uma publicação"
 							style={styles.input}
@@ -798,17 +881,28 @@ const styles = StyleSheet.create({
 		flex: 1,
 	},
 	scrollContent: {
-		alignItems: 'center',
 		paddingHorizontal: 20,
 		paddingVertical: 20,
 		paddingBottom: 28,
 	},
 	content: {
+		alignSelf: 'center',
 		width: '100%',
-		gap: 14,
 	},
 	tabletContent: {
 		maxWidth: 700,
+	},
+	itemSeparator: {
+		height: 14,
+	},
+	footerContainer: {
+		alignItems: 'center',
+		justifyContent: 'center',
+		paddingVertical: 20,
+	},
+	footerText: {
+		color: colors.textMuted,
+		fontSize: 12,
 	},
 	composer: {
 		backgroundColor: colors.cardBackground,
@@ -1382,8 +1476,6 @@ const styles = StyleSheet.create({
 		fontSize: 13,
 		fontWeight: 'bold',
 	},
-
-	// Estilos do Modal de Denúncia
 	denunciaModal: {
 		backgroundColor: colors.cardBackground,
 		borderTopLeftRadius: 20,
