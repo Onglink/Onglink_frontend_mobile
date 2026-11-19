@@ -6,6 +6,7 @@ export interface PublicacaoCriador {
   email: string;
   assignedTo?: {
     _id: string;
+    nome?: string;
     nomeFantasia?: string;
     logo?: string;
   };
@@ -22,6 +23,12 @@ export interface PublicacaoResponse {
   updatedAt?: string;
 }
 
+export interface PublicacoesPaginadasResponse {
+  publicacoes: PublicacaoResponse[];
+  hasMore: boolean;
+  nextPage: number | null;
+}
+
 export interface CriarPublicacaoPayload {
   titulo: string;
   descricao: string;
@@ -31,8 +38,23 @@ export interface CriarPublicacaoPayload {
 }
 
 export const publicacaoService = {
-  listarPublicacoes: async () => {
-    return await api.get<PublicacaoResponse[]>('/publicacoes');
+  listarPublicacoes: async (
+    page: number = 1,
+    limit: number = 10
+  ): Promise<PublicacoesPaginadasResponse> => {
+    const data = await api.get<PublicacoesPaginadasResponse | PublicacaoResponse[]>(
+      `/publicacoes?page=${page}&limit=${limit}`
+    );
+
+    if (Array.isArray(data)) {
+      return { publicacoes: data, hasMore: false, nextPage: null };
+    }
+
+    return {
+      publicacoes: data?.publicacoes ?? [],
+      hasMore: Boolean(data?.hasMore),
+      nextPage: data?.nextPage ?? null,
+    };
   },
 
   buscarPorId: async (id: string) => {
